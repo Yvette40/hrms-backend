@@ -1,0 +1,2 @@
+id,username,password_hash,role,created_at,updated_at
+1,admin,scrypt:32768:8:1$4MHwgADkSBtsVbf8$7fcb7770259f9baec99acd3ee68ed9406734119f5848676f09daf649ad0cee608915eb777d969b15373f03766b84a0f555ee4cfa0d0c0c26c5e1e3cbc4b48799,Admin,2025-10-27 17:39:15.907241,2025-10-27 17:39:15.907246

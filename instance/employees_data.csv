@@ -1,0 +1,85 @@
+name,national_id,department,position,base_salary,email,phone_number,username,password,join_date
+Francis Njoroge,19875545,Engineering,DevOps Engineer,98000,francis.njoroge@glimmer.com,+254740203484,fnjoroge,password123,2024-07-07
+Vincent Makokha,67461132,Engineering,Lead Developer,118000,vincent.makokha@glimmer.com,+254745492632,vmakokha,password123,2024-01-14
+Edwin Njeri,26986538,Engineering,Senior Software Engineer,112000,edwin.njeri@glimmer.com,+254740937215,enjeri,password123,2025-12-02
+Esther Nkirote,38358236,Engineering,Software Engineer,54000,esther.nkirote@glimmer.com,+254724833938,enkirote,password123,2023-08-17
+Timothy Onyango,78531720,Engineering,Junior Developer,41000,timothy.onyango@glimmer.com,+254742526429,tonyango,password123,2025-04-08
+Betty Nyamongo,68798245,Engineering,Lead Developer,137000,betty.nyamongo@glimmer.com,+254742911130,bnyamongo,password123,2021-11-11
+Patrick Salim,26283783,Engineering,Junior Developer,36000,patrick.salim@glimmer.com,+254725393424,psalim,password123,2024-07-11
+Betty Musyoka,70236939,Engineering,Junior Developer,47000,betty.musyoka@glimmer.com,+254742122419,bmusyoka,password123,2024-11-05
+Monica Omar,86159443,Engineering,Junior Developer,47000,monica.omar@glimmer.com,+254734240714,momar,password123,2022-08-24
+Nicholas Ndunge,88441504,Engineering,Lead Developer,128000,nicholas.ndunge@glimmer.com,+254768477243,nndunge,password123,2025-01-30
+Stephen Barasa,37258293,Engineering,Lead Developer,110000,stephen.barasa@glimmer.com,+254769630092,sbarasa,password123,2023-04-08
+Jennifer Kagwiria,70836516,Engineering,DevOps Engineer,95000,jennifer.kagwiria@glimmer.com,+254713361740,jkagwiria,password123,2023-05-12
+Joan Kinyanjui,82965458,Finance,Financial Analyst,72000,joan.kinyanjui@glimmer.com,+254740782244,jkinyanjui,password123,2024-03-27
+Stephen M'maitai,35884988,Finance,Accountant,52000,stephen.m'maitai@glimmer.com,+254734378104,sm'maitai,password123,2024-06-12
+Agnes Kioko,43292834,Finance,Accountant,70000,agnes.kioko@glimmer.com,+254722109721,akioko,password123,2025-04-01
+Felix Ochieng,52387957,Finance,Accountant,64000,felix.ochieng@glimmer.com,+254723950701,fochieng,password123,2022-12-02
+Ruth Waithera,12332219,Finance,Finance Manager,113000,ruth.waithera@glimmer.com,+254759803504,rwaithera,password123,2023-04-07
+Collins Abdalla,32115298,Finance,Financial Analyst,71000,collins.abdalla@glimmer.com,+254759580672,cabdalla,password123,2025-12-02
+Timothy Shikuku,89764498,Finance,Accounts Assistant,37000,timothy.shikuku@glimmer.com,+254715931474,tshikuku,password123,2025-08-03
+Jane Hamisi,65341774,Finance,Auditor,63000,jane.hamisi@glimmer.com,+254768563773,jhamisi,password123,2025-04-14
+Cynthia Odongo,42759575,Sales,Key Account Manager,89000,cynthia.odongo@glimmer.com,+254768644580,codongo,password123,2022-12-09
+Nicholas Mumo,50667176,Sales,Business Development Manager,122000,nicholas.mumo@glimmer.com,+254714959854,nmumo,password123,2025-11-17
+Grace Ruto,35804435,Sales,Key Account Manager,72000,grace.ruto@glimmer.com,+254740491393,gruto,password123,2023-09-09
+Emmanuel Shikuku,48834976,Sales,Business Development Manager,127000,emmanuel.shikuku@glimmer.com,+254742581454,eshikuku,password123,2022-10-30
+Simon Otieno,84916522,Sales,Sales Executive,51000,simon.otieno@glimmer.com,+254745272272,sotieno,password123,2024-03-23
+Cynthia Ndunge,59330590,Sales,Sales Representative,40000,cynthia.ndunge@glimmer.com,+254724749432,cndunge,password123,2022-10-17
+Joseph Adhiambo,44238184,Sales,Sales Manager,99000,joseph.adhiambo@glimmer.com,+254746478699,jadhiambo,password123,2024-05-07
+David Wambui,93521911,Sales,Key Account Manager,90000,david.wambui@glimmer.com,+254724485569,dwambui,password123,2023-10-14
+Michael Bett,32770477,Sales,Key Account Manager,77000,michael.bett@glimmer.com,+254723374628,mbett,password123,2025-05-19
+Lucy Nduku,28988060,Sales,Business Development Manager,126000,lucy.nduku@glimmer.com,+254713782101,lnduku,password123,2025-09-27
+Martin Lagat,71047694,Marketing,Marketing Manager,80000,martin.lagat@glimmer.com,+254745609399,mlagat,password123,2021-05-23
+Faith Khaemba,10351755,Marketing,Content Creator,46000,faith.khaemba@glimmer.com,+254742572773,fkhaemba,password123,2023-12-08
+Michelle Hassan,30756117,Marketing,Marketing Officer,60000,michelle.hassan@glimmer.com,+254722885999,mhassan,password123,2022-10-01
+Michael Shikuku,33559478,Marketing,Marketing Officer,66000,michael.shikuku@glimmer.com,+254714895430,mshikuku,password123,2024-09-12
+Rebecca M'maitai,15914083,Marketing,Brand Manager,81000,rebecca.m'maitai@glimmer.com,+254743662071,rm'maitai,password123,2022-03-22
+Ruth Kyalo,65455328,Marketing,Brand Manager,100000,ruth.kyalo@glimmer.com,+254724200796,rkyalo,password123,2022-02-28
+Moses Kilonzo,69439122,Marketing,Marketing Officer,59000,moses.kilonzo@glimmer.com,+254722945685,mkilonzo,password123,2022-05-05
+Joshua Kyalo,90192688,HR,HR Officer,66000,joshua.kyalo@glimmer.com,+254733205926,jkyalo,password123,2022-04-23
+Nicholas Hassan,33632591,HR,HR Assistant,46000,nicholas.hassan@glimmer.com,+254734650440,nhassan,password123,2022-04-19
+Ruth Nkirote,48205288,HR,HR Manager,89000,ruth.nkirote@glimmer.com,+254724280872,rnkirote,password123,2021-01-16
+Kevin Ouma,59622638,HR,HR Officer,51000,kevin.ouma@glimmer.com,+254759138670,kouma,password123,2021-06-23
+Sharon Njoroge,79335982,HR,HR Officer,58000,sharon.njoroge@glimmer.com,+254768450234,snjoroge,password123,2024-03-26
+Felix Abdalla,84789952,HR,HR Manager,98000,felix.abdalla@glimmer.com,+254714942228,fabdalla,password123,2021-12-30
+Patrick Keter,47347715,Operations,Operations Coordinator,67000,patrick.keter@glimmer.com,+254734533277,pketer,password123,2024-07-23
+Hannah Ouma,25057332,Operations,Project Manager,98000,hannah.ouma@glimmer.com,+254723479177,houma,password123,2023-11-20
+Martin Salim,98373070,Operations,Operations Coordinator,53000,martin.salim@glimmer.com,+254725986502,msalim,password123,2021-11-06
+Caroline Rotich,25492312,Operations,Project Manager,73000,caroline.rotich@glimmer.com,+254713409209,crotich,password123,2021-10-20
+Mary Wafula,76578500,Operations,Project Manager,85000,mary.wafula@glimmer.com,+254758483028,mwafula,password123,2022-06-10
+Margaret Nyamongo,84287102,Operations,Operations Manager,111000,margaret.nyamongo@glimmer.com,+254759804236,mnyamongo,password123,2024-04-04
+Victor Koech,13529635,Operations,Operations Manager,99000,victor.koech@glimmer.com,+254742122137,vkoech,password123,2024-03-24
+David Mwikali,24291875,IT,IT Manager,120000,david.mwikali@glimmer.com,+254715500099,dmwikali,password123,2025-10-05
+George Kirui,55572866,IT,Network Administrator,78000,george.kirui@glimmer.com,+254741957925,gkirui,password123,2025-03-09
+Lydia Barasa,33948711,IT,Network Administrator,69000,lydia.barasa@glimmer.com,+254714540175,lbarasa,password123,2023-01-31
+Christine M'maitai,62249823,IT,Network Administrator,66000,christine.m'maitai@glimmer.com,+254746626519,cm'maitai,password123,2023-12-15
+Margaret Gatwiri,55452052,IT,Database Administrator,67000,margaret.gatwiri@glimmer.com,+254715109775,mgatwiri,password123,2023-05-15
+Rachel Kipchoge,53729787,IT,Help Desk Officer,37000,rachel.kipchoge@glimmer.com,+254759150005,rkipchoge,password123,2022-02-22
+Cynthia Kagwiria,60446443,Customer Service,Customer Service Representative,43000,cynthia.kagwiria@glimmer.com,+254723611841,ckagwiria,password123,2024-02-05
+Patrick Wambui,74464779,Customer Service,Support Specialist,38000,patrick.wambui@glimmer.com,+254740739071,pwambui,password123,2025-09-18
+Cynthia Bett,19772279,Customer Service,Customer Service Representative,40000,cynthia.bett@glimmer.com,+254740539292,cbett,password123,2021-10-31
+Catherine Kioko,63469611,Customer Service,Customer Service Representative,47000,catherine.kioko@glimmer.com,+254740429654,ckioko,password123,2025-10-07
+Lydia Mumo,84219745,Customer Service,Customer Service Manager,69000,lydia.mumo@glimmer.com,+254715778444,lmumo,password123,2023-01-20
+Felix Kilonzo,62137926,Customer Service,Customer Service Representative,36000,felix.kilonzo@glimmer.com,+254723153780,fkilonzo,password123,2025-01-17
+Emmanuel Awino,80569452,Customer Service,Customer Service Manager,66000,emmanuel.awino@glimmer.com,+254725649226,eawino,password123,2025-06-26
+Peter Mwirigi,14730946,Customer Service,Support Specialist,55000,peter.mwirigi@glimmer.com,+254769749138,pmwirigi,password123,2023-09-08
+Josephine Lagat,95397797,Legal,Legal Officer,68000,josephine.lagat@glimmer.com,+254742421261,jlagat,password123,2023-07-11
+Joan Muthoni,27082374,Legal,Compliance Officer,83000,joan.muthoni@glimmer.com,+254759789135,jmuthoni,password123,2025-04-05
+Anthony Kinyanjui,50221497,Legal,Legal Officer,85000,anthony.kinyanjui@glimmer.com,+254734448531,akinyanjui,password123,2022-03-06
+Rebecca Ombati,96586725,Legal,Legal Officer,87000,rebecca.ombati@glimmer.com,+254712234227,rombati,password123,2025-01-15
+Philip Sang,76695768,Procurement,Procurement Officer,64000,philip.sang@glimmer.com,+254745854275,psang,password123,2022-02-08
+Monica Muthoni,50327592,Procurement,Procurement Manager,108000,monica.muthoni@glimmer.com,+254725310745,mmuthoni,password123,2025-09-08
+Joan Mutua,81812646,Procurement,Supply Chain Analyst,58000,joan.mutua@glimmer.com,+254713312809,jmutua,password123,2022-07-09
+Esther Makokha,33540702,Procurement,Procurement Manager,106000,esther.makokha@glimmer.com,+254722711900,emakokha,password123,2024-05-04
+Mercy Mohamed,67442781,Procurement,Procurement Officer,72000,mercy.mohamed@glimmer.com,+254740567667,mmohamed,password123,2024-07-05
+Allan Wanjiru,45726366,Admin,Office Administrator,56000,allan.wanjiru@glimmer.com,+254713259654,awanjiru,password123,2022-12-27
+Jane Kariuki,31581019,Admin,Office Administrator,50000,jane.kariuki@glimmer.com,+254758459209,jkariuki,password123,2023-07-16
+Sharon Wekesa,81427690,Admin,Administrative Assistant,35000,sharon.wekesa@glimmer.com,+254712273533,swekesa,password123,2023-11-01
+Monica Karanja,10014676,Admin,Office Manager,73000,monica.karanja@glimmer.com,+254742980315,mkaranja,password123,2023-04-23
+Timothy Bosire,70166276,Admin,Office Manager,74000,timothy.bosire@glimmer.com,+254742738139,tbosire,password123,2021-09-19
+Ruth Khaemba,34715364,Admin,Office Administrator,40000,ruth.khaemba@glimmer.com,+254740346101,rkhaemba,password123,2021-11-27
+Margaret Onyango,25351193,Logistics,Transport Manager,74000,margaret.onyango@glimmer.com,+254733692527,monyango,password123,2022-04-19
+Joyce Kimani,44133842,Logistics,Warehouse Supervisor,58000,joyce.kimani@glimmer.com,+254715814231,jkimani,password123,2023-09-27
+Simon Omondi,56861596,Logistics,Transport Manager,90000,simon.omondi@glimmer.com,+254722748372,somondi,password123,2025-11-27
+Martin Kioko,43643837,Logistics,Logistics Coordinator,52000,martin.kioko@glimmer.com,+254741763710,mkioko,password123,2024-12-27
+James Obiero,77980565,Logistics,Warehouse Supervisor,61000,james.obiero@glimmer.com,+254723169539,jobiero,password123,2024-11-21

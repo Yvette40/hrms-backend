@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="UTF-8"?><sqlb_project><db path="hrms.db" readonly="0" foreign_keys="1" case_sensitive_like="0" temp_store="0" wal_autocheckpoint="1000" synchronous="2"/><attached/><window><main_tabs open="structure browser pragmas query" current="3"/></window><tab_structure><column_width id="0" width="300"/><column_width id="1" width="0"/><column_width id="2" width="100"/><column_width id="3" width="3789"/><column_width id="4" width="0"/><expanded_item id="0" parent="1"/><expanded_item id="1" parent="1"/><expanded_item id="2" parent="1"/><expanded_item id="3" parent="1"/></tab_structure><tab_browse><table title="anomaly" custom_title="0" dock_id="1" table="4,7:mainanomaly"/><dock_state state="000000ff00000000fd00000001000000020000031700000216fc0100000001fb000000160064006f0063006b00420072006f00770073006500310100000000000003170000011800ffffff000002580000000000000004000000040000000800000008fc00000000"/><default_encoding codec=""/><browse_table_settings><table schema="main" name="anomaly" show_row_id="0" encoding="" plot_x_axis="" unlock_view_pk="_rowid_" freeze_columns="0"><sort/><column_widths><column index="1" value="29"/><column index="2" value="81"/><column index="3" value="85"/><column index="4" value="210"/><column index="5" value="53"/><column index="6" value="70"/><column index="7" value="156"/><column index="8" value="156"/></column_widths><filter_values/><conditional_formats/><row_id_formats/><display_formats/><hidden_columns/><plot_y_axes/><global_filter/></table></browse_table_settings></tab_browse><tab_sql><sql name="SQL 1*">DROP TABLE IF EXISTS audit_trail;
+CREATE TABLE audit_trail (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    action TEXT NOT NULL,
+    module TEXT NOT NULL,
+    details TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES user(id) ON DELETE CASCADE
+);
+
+DROP TABLE IF EXISTS anomaly;
+CREATE TABLE anomaly (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    employee_id INTEGER NOT NULL,
+    category TEXT NOT NULL,
+    description TEXT,
+    severity TEXT DEFAULT 'Medium',
+    status TEXT DEFAULT 'Open',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (employee_id) REFERENCES employee(id) ON DELETE CASCADE
+);
+
+-- STEP 1: Create a test user
+INSERT INTO user (username, password_hash, role)
+VALUES ('delete_test_user', 'hash123', 'tester');
+
+-- STEP 2: Get the new user's ID
+SELECT id, username FROM user WHERE username = 'delete_test_user';
+
+-- STEP 3: Add audit trail records linked to that user
+INSERT INTO audit_trail (user_id, action, module, details)
+VALUES (
+    (SELECT id FROM user WHERE username = 'delete_test_user'),
+    'CREATE', 'test_module', 'Created a test record'
+);
+
+-- STEP 4: Check that the audit record exists
+SELECT * FROM audit_trail WHERE user_id = (SELECT id FROM user WHERE username = 'delete_test_user');
+
+-- STEP 5: Delete the user (this should automatically delete the audit trail too)
+DELETE FROM user WHERE username = 'delete_test_user';
+
+-- STEP 6: Verify that the audit trail record is gone
+SELECT * FROM audit_trail WHERE module = 'test_module';
+
+-- STEP 1: Create a test employee
+INSERT INTO employee (name, national_id, department, position)
+VALUES ('Delete Test', '99999999', 'Testing', 'Intern');
+
+-- STEP 2: Add anomaly for this employee
+INSERT INTO anomaly (employee_id, category, description, severity)
+VALUES ((SELECT id FROM employee WHERE name = 'Delete Test'), 'Data Error', 'Incorrect input test', 'High');
+
+-- STEP 3: Confirm the anomaly exists
+SELECT * FROM anomaly WHERE employee_id = (SELECT id FROM employee WHERE name = 'Delete Test');
+
+-- STEP 4: Delete the employee (this should delete the anomaly automatically)
+DELETE FROM employee WHERE name = 'Delete Test';
+
+-- STEP 5: Confirm anomaly was removed
+SELECT * FROM anomaly WHERE description = 'Incorrect input test';
+
+PRAGMA foreign_keys;
+
+-- BACKUP existing audit_trail data
+CREATE TABLE IF NOT EXISTS audit_trail_backup_v2 AS SELECT * FROM audit_trail;
+
+-- DROP and recreate enhanced version
+DROP TABLE IF EXISTS audit_trail;
+CREATE TABLE audit_trail (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    action TEXT NOT NULL,
+    module TEXT NOT NULL,
+    record_id INTEGER,
+    details TEXT,
+    status TEXT DEFAULT 'SUCCESS',
+    ip_address TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES user(id) ON DELETE CASCADE
+);
+
+
+-- BACKUP existing anomaly data
+CREATE TABLE IF NOT EXISTS anomaly_backup_v2 AS SELECT * FROM anomaly;
+
+-- DROP and recreate enhanced version
+DROP TABLE IF EXISTS anomaly;
+CREATE TABLE anomaly (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    employee_id INTEGER NOT NULL,
+    category TEXT NOT NULL,
+    description TEXT,
+    severity TEXT DEFAULT 'Medium',
+    status TEXT DEFAULT 'Open',
+    detected_by INTEGER DEFAULT 1,
+    resolved_by INTEGER,
+    notes TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    resolved_at DATETIME,
+    FOREIGN KEY (employee_id) REFERENCES employee(id) ON DELETE CASCADE,
+    FOREIGN KEY (detected_by) REFERENCES user(id) ON DELETE SET NULL,
+    FOREIGN KEY (resolved_by) REFERENCES user(id) ON DELETE SET NULL
+);
+
+INSERT INTO audit_trail (user_id, action, module, record_id, details, status, ip_address)
+VALUES (1, 'CREATE', 'employee', 2, 'Added new employee record', 'SUCCESS', '192.168.1.10');
+
+
+
+SELECT * FROM audit_trail;
+SELECT * FROM anomaly;
+
+SELECT id, name FROM employee;
+SELECT id, username FROM user;
+
+SELECT id, name FROM employee;
+SELECT id, username FROM user;
+
+INSERT OR IGNORE INTO user (id, username, password_hash, role)
+VALUES (1, 'system', 'system_placeholder_hash', 'system');
+
+
+
+INSERT INTO anomaly (employee_id, category, description, severity, detected_by)
+VALUES (2, 'Data Mismatch', 'Salary total mismatch detected', 'High', 1);
+
+INSERT INTO anomaly (employee_id, category, description, severity, detected_by)
+VALUES (1, 'Data Mismatch', 'Salary total mismatch detected', 'High', 1);
+
+
+SELECT id, username, role FROM user;
+SELECT id, name, department, position FROM employee;
+
+INSERT INTO employee (name, national_id, department, position)
+VALUES ('John Doe', '12345678', 'IT', 'Developer');
+
+
+
+
+
+
+</sql><current_tab id="0"/></tab_sql></sqlb_project>

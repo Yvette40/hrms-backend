@@ -1,0 +1,2 @@
+id,employee_id,period_start,period_end,gross_salary,anomaly_flag,created_at
+1,1,2025-10-01,2025-10-31,1000.0,1,2025-10-27 18:11:07.401666
