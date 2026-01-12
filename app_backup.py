@@ -3,7 +3,7 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_jwt_extended import (
     JWTManager, create_access_token, jwt_required, get_jwt_identity
 )
-from datetime import datetime, timedelta
+from datetime import datetime
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_cors import CORS
 import os, sys
@@ -16,23 +16,8 @@ from utils.sod_checker import check_payroll_separation, SeparationOfDutiesViolat
 from models import User, Employee, Attendance, Payroll, AuditTrail, Anomaly, ApprovalRequest, SecurityEvent, SeparationOfDutiesLog
 from flask_mail import Mail, Message
 from dotenv import load_dotenv
-from sqlalchemy import extract, and_, func
-
-# ============================================================================
-# SECURITY IMPORTS - ADDED
-# ============================================================================
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
-import logging
-from logging.handlers import RotatingFileHandler
-import secrets
-
-# Import validators
-from validators import (
-    validate_email, validate_password, validate_national_id,
-    validate_phone, validate_username, validate_salary,
-    sanitize_string, validate_required_fields
-)
+from datetime import datetime, timedelta
+from sqlalchemy import extract
 
 # Load environment variables FIRST
 load_dotenv()
@@ -49,14 +34,11 @@ from config import Config
 app.config.from_object(Config)
 
 # =====================================================
-# CORS CONFIGURATION - UPDATED WITH SECURITY
+# CORS CONFIGURATION - FIXED
 # =====================================================
-# Get allowed origins from environment variable
-allowed_origins = os.getenv('CORS_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000').split(',')
-
 CORS(app, resources={
     r"/*": {
-        "origins": allowed_origins,
+        "origins": ["http://localhost:3000", "http://127.0.0.1:3000"],
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization"],
         "supports_credentials": True,
@@ -65,20 +47,21 @@ CORS(app, resources={
 })
 
 # =====================================================
-# CONFIGURATION - UPDATED WITH SECURITY
+# CONFIGURATION
 # =====================================================
 os.makedirs(os.path.join(app.root_path, "instance"), exist_ok=True)
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 db_path = os.path.join(BASE_DIR, "instance", "hrms.db")
 
-# Secure JWT and Secret Keys
-app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY", secrets.token_hex(32))
-app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", secrets.token_hex(32))
-
-# Add security headers
-app.config['SESSION_COOKIE_SECURE'] = True
-app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{db_path}"
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+app.config["JWT_SECRET_KEY"] = "super-secret-key"
+app.config['MAIL_SERVER'] = os.getenv('MAIL_SERVER')
+app.config['MAIL_PORT'] = int(os.getenv('MAIL_PORT', 587))
+app.config['MAIL_USE_TLS'] = os.getenv('MAIL_USE_TLS', 'True') == 'True'
+app.config['MAIL_USERNAME'] = os.getenv('MAIL_USERNAME')
+app.config['MAIL_PASSWORD'] = os.getenv('MAIL_PASSWORD')
+app.config['MAIL_DEFAULT_SENDER'] = os.getenv('MAIL_DEFAULT_SENDER')
 
 # Initialize extensions
 mail = Mail(app)
@@ -91,59 +74,12 @@ migrate = Migrate(app, db)
 sms_service = SMSService()
 payroll_scheduler = PayrollScheduler()
 
-# ============================================================================
-# RATE LIMITER - ADDED
-# ============================================================================
-limiter = Limiter(
-    app=app,
-    key_func=get_remote_address,
-    default_limits=["200 per day", "50 per hour"],
-    storage_uri="memory://"
-)
-
-# ============================================================================
-# LOGGING CONFIGURATION - ADDED
-# ============================================================================
-if not app.debug:
-    # Create logs directory
-    os.makedirs('logs', exist_ok=True)
-    
-    # File handler with rotation
-    file_handler = RotatingFileHandler(
-        'logs/hrms.log',
-        maxBytes=10240000,  # 10MB
-        backupCount=10
-    )
-    
-    # Formatter
-    file_handler.setFormatter(logging.Formatter(
-        '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
-    ))
-    
-    file_handler.setLevel(logging.INFO)
-    app.logger.addHandler(file_handler)
-    app.logger.setLevel(logging.INFO)
-    app.logger.info('HRMS startup')
-
-# ============================================================================
-# SECURITY HEADERS MIDDLEWARE - ADDED
-# ============================================================================
-@app.after_request
-def set_security_headers(response):
-    """Add security headers to all responses"""
-    response.headers['X-Content-Type-Options'] = 'nosniff'
-    response.headers['X-Frame-Options'] = 'DENY'
-    response.headers['X-XSS-Protection'] = '1; mode=block'
-    response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
-    
-    # Remove server header
-    response.headers.pop('Server', None)
-    
-    return response
-
 # =====================================================
 # Initialize SMS Service and Payroll Scheduler
 # =====================================================
+# Initialize after jwt and db
+# Initialize scheduler after database setup
+# This runs once when the app context is created
 def initialize_scheduler():
     """Start the payroll scheduler on app startup"""
     try:
@@ -157,29 +93,6 @@ def initialize_scheduler():
 def attach_user():
     load_current_user()
 
-# ============================================================================
-# HEALTH CHECK ENDPOINT - ADDED
-# ============================================================================
-@app.route('/health', methods=['GET'])
-def health_check():
-    """Health check endpoint for monitoring"""
-    try:
-        # Check database connection
-        db.session.execute('SELECT 1')
-        
-        return jsonify({
-            "status": "healthy",
-            "database": "connected",
-            "timestamp": datetime.utcnow().isoformat()
-        }), 200
-        
-    except Exception as e:
-        app.logger.error(f"Health check failed: {str(e)}")
-        return jsonify({
-            "status": "unhealthy",
-            "error": str(e),
-            "timestamp": datetime.utcnow().isoformat()
-        }), 500
 
 @app.route('/test-email-html')
 def test_email_html():
@@ -194,6 +107,7 @@ def test_email_html():
         return {"message": "Test email sent!"}, 200
     except Exception as e:
         return {"message": f"Failed to send email: {str(e)}"}, 500
+
 
 # =====================================================
 # SMS TEST ENDPOINT (Optional - for testing)
@@ -371,13 +285,13 @@ def init_database():
         db.session.commit()
 
 
-#with app.app_context():
+with app.app_context():
     # Create all database tables first
-    #db.create_all()
-    #print("✅ Database tables created")
+    db.create_all()
+    print("✅ Database tables created")
     
     # Then initialize database with seed data
-    #init_database() 
+    init_database() 
     
     user_count = User.query.count()  
     employee_count = Employee.query.count()  
@@ -407,38 +321,24 @@ def home():
     return "✅ HRMS Backend Running Successfully!"
 
 # =====================================================
-# AUTHENTICATION - UPDATED WITH SECURITY
+# AUTHENTICATION
 # =====================================================
 @app.route("/login", methods=["POST"])
-@limiter.limit("5 per minute")  # Add rate limiting
 def login():
     data = request.json
-    
-    # Validate required fields
     if not data or not data.get("username") or not data.get("password"):
-        app.logger.warning(f"Login attempt with missing credentials from {request.remote_addr}")
         return jsonify({"msg": "Username and password are required"}), 400
-    
-    # Sanitize username input
-    username = sanitize_string(data["username"])
 
-    user = User.query.filter_by(username=username).first()
-    
+    user = User.query.filter_by(username=data["username"]).first()
     if not user or not user.check_password(data["password"]):
         log_audit_action_safe(
             db,
             action_type="LOGIN_FAILED",
-            description=f"Failed login attempt for {username}",
+            description=f"Failed login attempt for {data.get('username')}",
             module="AUTH",
             ip_address=request.remote_addr,
         )
-        app.logger.warning(f"Failed login attempt for {username} from {request.remote_addr}")
         return jsonify({"msg": "Invalid credentials"}), 401
-
-    # Check if user is active
-    if not user.is_active:
-        app.logger.warning(f"Login attempt by inactive user {username}")
-        return jsonify({"msg": "Account is inactive. Contact administrator."}), 403
 
     # Update last login
     user.last_login = datetime.utcnow()
@@ -452,12 +352,8 @@ def login():
         user_id=user.id,
         ip_address=request.remote_addr,
     )
-    
-    app.logger.info(f"Successful login for {user.username} from {request.remote_addr}")
 
-    # Create JWT token with expiration
-    expires = timedelta(hours=int(os.getenv('JWT_ACCESS_TOKEN_EXPIRES', 24)))
-    access_token = create_access_token(identity=user.username, expires_delta=expires)
+    access_token = create_access_token(identity=user.username)
     
     # Get linked employee profile if exists
     employee_profile = user.employee_profile
@@ -465,7 +361,7 @@ def login():
     # Build response with role and employee data
     response_data = {
         'access_token': access_token,
-        'role': user.role,
+        'role': user.role,  # ✅ From database
         'username': user.username,
         'user_id': user.id,
     }
@@ -482,12 +378,13 @@ def login():
             'phone': employee_profile.phone_number or user.phone,
         })
     else:
+        # User without employee profile (e.g., Admin, HR Officer)
         response_data.update({
             'employee_id': None,
             'employee_national_id': None,
             'employee_name': user.username,
             'department': 'Administration',
-            'position': user.role,
+            'position': user.role,  # Fallback to role
             'email': user.email,
             'phone': user.phone,
         })
@@ -624,7 +521,7 @@ def get_recent_activity():
         return jsonify({"error": str(e)}), 500
 
 # =====================================================
-# EMPLOYEE MANAGEMENT - UPDATED WITH VALIDATION
+# EMPLOYEE MANAGEMENT
 # =====================================================
 @app.route("/employees", methods=["POST"])
 @jwt_required()
@@ -637,57 +534,35 @@ def add_employee():
         return jsonify({"msg": "Unauthorized"}), 403
     
     data = request.get_json()
+    name = data.get("name")
+    national_id = data.get("national_id")
+    base_salary = data.get("base_salary")
+    email = data.get("email")
+    phone_number = data.get("phone_number")
+    department = data.get("department", "General")
+    position = data.get("position", "Employee")
     
-    # Validate required fields
-    required_fields = ['name', 'national_id', 'base_salary']
-    is_valid, message = validate_required_fields(data, required_fields)
-    if not is_valid:
-        return jsonify({"msg": message}), 400
-    
-    # Validate national ID
-    is_valid, message = validate_national_id(data.get('national_id'))
-    if not is_valid:
-        return jsonify({"msg": message}), 400
-    
-    # Validate email if provided
-    if data.get('email'):
-        is_valid, message = validate_email(data.get('email'))
-        if not is_valid:
-            return jsonify({"msg": message}), 400
-    
-    # Validate phone if provided
-    if data.get('phone_number'):
-        is_valid, message = validate_phone(data.get('phone_number'))
-        if not is_valid:
-            return jsonify({"msg": message}), 400
-    
-    # Validate salary
-    is_valid, message = validate_salary(data.get('base_salary'))
-    if not is_valid:
-        return jsonify({"msg": message}), 400
-    
-    # Sanitize string inputs
-    name = sanitize_string(data.get('name'))
-    department = sanitize_string(data.get('department', 'General'))
-    position = sanitize_string(data.get('position', 'Employee'))
-    
-    # Check if employee already exists
-    existing = Employee.query.filter_by(national_id=data['national_id']).first()
-    if existing:
-        return jsonify({"msg": "Employee with this National ID already exists"}), 400
-    
-    # Check if we should create a user account
+    # ✅ NEW: Check if we should create a user account
     create_user_account = data.get("create_user_account", True)
     username = data.get("username")
     temp_password = data.get("temp_password", "TempPass123")
 
+    if not name or not national_id or base_salary is None:
+        return jsonify({"msg": "Please provide name, national_id, and base_salary"}), 400
+
+    # Check if employee already exists
+    existing = Employee.query.filter_by(national_id=national_id).first()
+    if existing:
+        return jsonify({"msg": "Employee with this National ID already exists"}), 400
+
     user_id = None
     created_username = None
     
-    # Create user account if requested
+    # ✅ Create user account if requested
     if create_user_account:
         # Generate username if not provided
         if not username:
+            # Auto-generate: first letter + last name (e.g., John Mwangi -> jmwangi)
             name_parts = name.lower().split()
             if len(name_parts) >= 2:
                 username = name_parts[0][0] + name_parts[-1]
@@ -709,71 +584,63 @@ def add_employee():
         new_user = User(
             username=username,
             role="Employee",
-            email=data.get('email'),
-            phone=data.get('phone_number')
+            email=email,
+            phone=phone_number
         )
         new_user.set_password(temp_password)
         db.session.add(new_user)
-        db.session.flush()
+        db.session.flush()  # Get the user ID
         
         user_id = new_user.id
         created_username = username
 
-    try:
-        # Create employee record
-        new_emp = Employee(
-            name=name,
-            national_id=data['national_id'],
-            base_salary=float(data['base_salary']),
-            department=department,
-            position=position,
-            email=data.get('email'),
-            phone_number=data.get('phone_number'),
-            join_date=datetime.strptime(data.get('join_date'), '%Y-%m-%d').date() if data.get('join_date') else datetime.now().date(),
-            leave_balance=int(data.get('leave_balance', 21)),
-            user_id=user_id,
-            created_by=user.id
-        )
-        
-        db.session.add(new_emp)
-        db.session.commit()
-        
-        log_audit_action_safe(
-            db,
-            action_type="EMPLOYEE_CREATE",
-            description=f"Created employee: {new_emp.name} (ID: {new_emp.national_id})" + (f" with username {created_username}" if created_username else ""),
-            module="EMPLOYEES",
-            user_id=user.id,
-            ip_address=request.remote_addr,
-        )
-        
-        app.logger.info(f"Employee created: {new_emp.name} by {user.username}")
-        
-        response = {
-            "msg": "Employee added successfully",
-            "employee": {
-                "id": new_emp.id,
-                "name": new_emp.name,
-                "national_id": new_emp.national_id,
-                "base_salary": new_emp.base_salary,
-                "department": new_emp.department,
-                "position": new_emp.position
-            }
+    # Create employee record
+    new_emp = Employee(
+        name=name,
+        national_id=national_id,
+        base_salary=base_salary,
+        email=email,
+        phone_number=phone_number,
+        department=department,
+        position=position,
+        user_id=user_id  # ✅ Link to user account
+    )
+    db.session.add(new_emp)
+    db.session.commit()
+
+    # Audit log
+    log_audit_action_safe(
+        db,
+        action_type="ADD_EMPLOYEE",
+        description=f"Added employee {name}" + (f" with username {created_username}" if created_username else ""),
+        module="EMPLOYEE",
+        user_id=user.id,
+        ip_address=request.remote_addr,
+    )
+    
+    # ✅ TODO: Send email/SMS with credentials
+    # send_credentials_email(email, created_username, temp_password)
+
+    response = {
+        "msg": "Employee added successfully",
+        "employee": {
+            "id": new_emp.id,
+            "name": new_emp.name,
+            "national_id": new_emp.national_id,
+            "base_salary": new_emp.base_salary,
+            "department": new_emp.department,
+            "position": new_emp.position
         }
-        
-        if created_username:
-            response["user_credentials"] = {
-                "username": created_username,
-                "temp_password": temp_password,
-                "message": "⚠️ Save these credentials! Send them to the employee."
-            }
-        
-        return jsonify(response), 201
-        
-    except Exception as e:
-        db.session.rollback()
-        app.logger.error(f"Error creating employee: {str(e)}")
-        return jsonify({"msg": f"Error creating employee: {str(e)}"}), 500
+    }
+    
+    if created_username:
+        response["user_credentials"] = {
+            "username": created_username,
+            "temp_password": temp_password,
+            "message": "⚠️ Save these credentials! Send them to the employee."
+        }
+    
+    return jsonify(response), 201
 
 
 @app.route("/employees", methods=["GET"])
@@ -805,7 +672,7 @@ def get_employees():
                     "name": e.name,
                     "national_id": getattr(e, "national_id", ""),
                     "base_salary": e.base_salary,
-                    "active": getattr(e, "active", True),
+                    "active": getattr(e, "active", True),  # Safe default
                 }
                 for e in employees.items
             ],
@@ -892,6 +759,7 @@ def get_my_info():
             }), 200
         
         # Calculate days present this month
+        from sqlalchemy import extract
         current_month = datetime.now().month
         current_year = datetime.now().year
         
@@ -977,16 +845,19 @@ def record_attendance():
 # PAYROLL MANAGEMENT
 # =====================================================
 
+# ✅ NEW: GET ALL PAYROLLS ENDPOINT
 @app.route("/payrolls", methods=["GET", "OPTIONS"])
-@jwt_required(optional=True)
+@jwt_required(optional=True)  # Allow unauthenticated OPTIONS requests
 def get_payrolls():
     """Fetch all payroll records"""
+    # Handle OPTIONS preflight request
     if request.method == "OPTIONS":
         return "", 204
     
     try:
         current_user = get_jwt_identity()
         
+        # Get all payrolls ordered by most recent
         payrolls = Payroll.query.order_by(Payroll.id.desc()).all()
         
         result = []
@@ -1000,12 +871,13 @@ def get_payrolls():
                 "period_end": p.period_end.strftime("%Y-%m-%d"),
                 "gross_salary": float(p.gross_salary),
                 "anomaly_flag": p.anomaly_flag,
-                "status": getattr(p, 'status', 'Approved'),
+                "status": getattr(p, 'status', 'Approved'),  # Safe default
                 "prepared_by": getattr(p, 'prepared_by', None),
                 "approved_by": getattr(p, 'approved_by', None),
                 "approved_at": p.approved_at.strftime("%Y-%m-%d %H:%M:%S") if hasattr(p, 'approved_at') and p.approved_at else None
             })
         
+        # Log audit action
         if current_user:
             log_audit_action_safe(
                 db,
@@ -1111,6 +983,7 @@ def resolve_anomaly(id):
 # =====================================================
 # AUDIT TRAIL ENDPOINT (For frontend fetch)
 # =====================================================
+from sqlalchemy import and_, func
 
 def parse_date_iso(value):
     if not value:
@@ -1536,6 +1409,8 @@ def get_employee_payslips(employee_id):
     
     # Employees can only view their own payslips
     if user.role == 'Employee':
+        # TODO: Link user to employee record
+        # For now, allow if employee_id matches
         pass
     
     payslips = Payroll.query.filter_by(
@@ -1570,6 +1445,7 @@ def get_payslip_details(payroll_id):
     
     # Authorization check
     if user.role == 'Employee':
+        # TODO: Check if this is user's own payslip
         pass
     
     return jsonify({
@@ -1869,6 +1745,7 @@ def get_notifications():
             return jsonify({'error': 'User not found'}), 404
         
         # For now, return sample notifications
+        # TODO: Create Notification model and fetch from database
         notifications_list = [
             {
                 'id': 1,
@@ -1910,6 +1787,8 @@ def get_notifications():
 def get_unread_count():
     """Get count of unread notifications"""
     try:
+        # For now, return sample count
+        # TODO: Query from database
         count = 2
         return jsonify({'count': count}), 200
         
@@ -1922,6 +1801,7 @@ def get_unread_count():
 def mark_notification_read(notification_id):
     """Mark a notification as read"""
     try:
+        # TODO: Update in database
         return jsonify({'message': 'Notification marked as read'}), 200
         
     except Exception as e:
@@ -1933,6 +1813,7 @@ def mark_notification_read(notification_id):
 def mark_all_notifications_read():
     """Mark all notifications as read"""
     try:
+        # TODO: Update all in database
         return jsonify({'message': 'All notifications marked as read'}), 200
         
     except Exception as e:
@@ -1944,6 +1825,7 @@ def mark_all_notifications_read():
 def delete_notification(notification_id):
     """Delete a notification"""
     try:
+        # TODO: Delete from database
         return jsonify({'message': 'Notification deleted'}), 200
         
     except Exception as e:
@@ -1996,6 +1878,10 @@ def update_profile():
         
         data = request.get_json()
         
+        # Update fields if they exist in User model
+        # For now, we'll just acknowledge the update
+        # TODO: Add these fields to User model if needed
+        
         log_audit_action_safe(
             db,
             action_type="UPDATE_PROFILE",
@@ -2026,6 +1912,8 @@ def get_settings():
         if not user:
             return jsonify({'error': 'User not found'}), 404
         
+        # Return default settings for now
+        # TODO: Create UserSettings model and fetch from database
         settings = {
             'emailNotifications': True,
             'pushNotifications': True,
@@ -2059,6 +1947,8 @@ def update_settings():
             return jsonify({'error': 'User not found'}), 404
         
         data = request.get_json()
+        
+        # TODO: Save settings to database
         
         log_audit_action_safe(
             db,
@@ -2134,6 +2024,9 @@ def get_leave_requests():
     current_user = get_jwt_identity()
     user = User.query.filter_by(username=current_user).first()
     
+    # For now, return empty list (you'll implement LeaveRequest model later)
+    # TODO: Implement when LeaveRequest model is created
+    
     return jsonify([]), 200
 
 
@@ -2146,6 +2039,13 @@ def approve_leave_request(leave_id):
     
     if user.role not in ['Admin', 'HR Officer']:
         return jsonify({"msg": "Unauthorized"}), 403
+    
+    # TODO: Implement when LeaveRequest model is created
+    # leave = LeaveRequest.query.get_or_404(leave_id)
+    # leave.status = 'Approved'
+    # leave.approved_by = user.id
+    # leave.approved_at = datetime.utcnow()
+    # db.session.commit()
     
     return jsonify({"msg": "Leave request approved"}), 200
 
@@ -2163,6 +2063,14 @@ def reject_leave_request(leave_id):
     data = request.json
     reason = data.get('reason', 'No reason provided')
     
+    # TODO: Implement when LeaveRequest model is created
+    # leave = LeaveRequest.query.get_or_404(leave_id)
+    # leave.status = 'Rejected'
+    # leave.approved_by = user.id
+    # leave.approved_at = datetime.utcnow()
+    # leave.rejection_reason = reason
+    # db.session.commit()
+    
     return jsonify({"msg": "Leave request rejected"}), 200
 
 
@@ -2175,11 +2083,23 @@ def create_leave_request():
     
     data = request.json
     
+    # TODO: Implement when LeaveRequest model is created
+    # leave = LeaveRequest(
+    #     employee_id=data['employee_id'],
+    #     start_date=datetime.strptime(data['start_date'], '%Y-%m-%d').date(),
+    #     end_date=datetime.strptime(data['end_date'], '%Y-%m-%d').date(),
+    #     leave_type=data.get('leave_type', 'Annual'),
+    #     reason=data.get('reason', ''),
+    #     status='Pending'
+    # )
+    # db.session.add(leave)
+    # db.session.commit()
+    
     return jsonify({"msg": "Leave request created"}), 201
 
 
 # =====================================================
-# USER MANAGEMENT ENDPOINTS (Admin only) - UPDATED WITH VALIDATION
+# USER MANAGEMENT ENDPOINTS (Admin only)
 # =====================================================
 
 @app.route("/users", methods=["GET"])
@@ -2219,64 +2139,29 @@ def create_user():
     
     data = request.json
     
-    # Validate username
-    is_valid, message = validate_username(data.get('username'))
-    if not is_valid:
-        return jsonify({"msg": message}), 400
-    
-    # Validate password
-    is_valid, message = validate_password(data.get('password'))
-    if not is_valid:
-        return jsonify({"msg": message}), 400
-    
-    # Validate email if provided
-    if data.get('email'):
-        is_valid, message = validate_email(data.get('email'))
-        if not is_valid:
-            return jsonify({"msg": message}), 400
-    
-    # Check if username exists
+    # Check if username already exists
     if User.query.filter_by(username=data['username']).first():
         return jsonify({"msg": "Username already exists"}), 400
     
-    try:
-        new_user = User(
-            username=data['username'],
-            role=data.get('role', 'Employee'),
-            email=data.get('email'),
-            phone=data.get('phone'),
-            is_active=True
-        )
-        new_user.set_password(data['password'])
-        
-        db.session.add(new_user)
-        db.session.commit()
-        
-        log_audit_action_safe(
-            db,
-            action_type="USER_CREATE",
-            description=f"Created user: {new_user.username} with role {new_user.role}",
-            module="USERS",
-            user_id=user.id,
-            ip_address=request.remote_addr,
-        )
-        
-        app.logger.info(f"User created: {new_user.username} by {user.username}")
-        
-        return jsonify({
-            "msg": "User created successfully",
-            "user": {
-                "id": new_user.id,
-                "username": new_user.username,
-                "role": new_user.role,
-                "email": new_user.email
-            }
-        }), 201
-        
-    except Exception as e:
-        db.session.rollback()
-        app.logger.error(f"Error creating user: {str(e)}")
-        return jsonify({"msg": f"Error creating user: {str(e)}"}), 500
+    new_user = User(
+        username=data['username'],
+        role=data['role']
+    )
+    new_user.set_password(data['password'])
+    
+    db.session.add(new_user)
+    db.session.commit()
+    
+    log_audit_action_safe(
+        db,
+        action_type="CREATE_USER",
+        description=f"Created new user: {data['username']}",
+        module="USER_MGMT",
+        user_id=user.id,
+        ip_address=request.remote_addr
+    )
+    
+    return jsonify({"msg": "User created successfully"}), 201
 
 
 @app.route("/users/<int:user_id>", methods=["PUT"])
@@ -2308,7 +2193,7 @@ def update_user(user_id):
         description=f"Updated user: {user_to_update.username}",
         module="USER_MGMT",
         user_id=admin_user.id,
-        ip_address=request.remote_addr,
+        ip_address=request.remote_addr
     )
     
     return jsonify({"msg": "User updated successfully"}), 200
@@ -2340,7 +2225,7 @@ def delete_user(user_id):
         description=f"Deleted user: {username}",
         module="USER_MGMT",
         user_id=admin_user.id,
-        ip_address=request.remote_addr,
+        ip_address=request.remote_addr
     )
     
     return jsonify({"msg": "User deleted successfully"}), 200
@@ -2384,6 +2269,9 @@ def get_my_payslips():
     return jsonify(result), 200
 
 
+# Note: /payroll/payslip/<int:payroll_id> endpoint already exists in your app.py
+
+
 # =====================================================
 # ATTENDANCE - MY ATTENDANCE ENDPOINT
 # =====================================================
@@ -2402,6 +2290,7 @@ def get_my_attendance():
         return jsonify([]), 200
     
     # Get attendance records (last 30 days)
+    from datetime import datetime, timedelta
     thirty_days_ago = datetime.now().date() - timedelta(days=30)
     
     attendance_records = Attendance.query.filter(
