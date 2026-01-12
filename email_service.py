@@ -9,8 +9,11 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
+
 from datetime import datetime
 import os
+from dotenv import load_dotenv
+load_dotenv()
 
 class EmailService:
     def __init__(self, smtp_server="smtp.gmail.com", smtp_port=587):
