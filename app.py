@@ -17,6 +17,7 @@ from models import User, Employee, Attendance, Payroll, AuditTrail, Anomaly, App
 from flask_mail import Mail, Message
 from dotenv import load_dotenv
 from sqlalchemy import extract, and_, func
+from scheduler_service import init_scheduler
 
 # ============================================================================
 # SECURITY IMPORTS - ADDED
@@ -90,14 +91,14 @@ migrate = Migrate(app, db)
 
 sms_service = SMSService()
 payroll_scheduler = PayrollScheduler()
-
+scheduler = init_scheduler(app, db)
 # ============================================================================
 # RATE LIMITER - ADDED
 # ============================================================================
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,
-    default_limits=["200 per day", "50 per hour"],
+    default_limits=["2000 per day", "500 per hour"],  # Increased for bulk operations
     storage_uri="memory://"
 )
 
@@ -783,12 +784,16 @@ def get_employees():
     page = request.args.get("page", 1, type=int)
     per_page = request.args.get("per_page", 10, type=int)
 
+    # Allow fetching all employees if per_page is very large
+    if per_page > 1000:
+        per_page = 1000  # Max limit for safety
+    
     employees = Employee.query.paginate(page=page, per_page=per_page, error_out=False)
 
     log_audit_action_safe(
         db,
         action_type="VIEW_EMPLOYEES",
-        description="Viewed employee list",
+        description=f"Viewed {len(employees.items)} employee(s)",
         module="EMPLOYEE",
         user_id=current_user,
     )
@@ -804,6 +809,9 @@ def get_employees():
                     "id": e.id,
                     "name": e.name,
                     "national_id": getattr(e, "national_id", ""),
+                    "department": getattr(e, "department", "N/A"),
+                    "email": getattr(e, "email", ""),
+                    "phone_number": getattr(e, "phone_number", ""),
                     "base_salary": e.base_salary,
                     "active": getattr(e, "active", True),
                 }
@@ -2449,5 +2457,125 @@ def check_roles():
 # MAIN
 # =====================================================
 
+
+@app.route("/send-welcome-email", methods=["POST"])
+@jwt_required()
+def send_welcome_email():
+    """Send welcome email with login credentials"""
+    data = request.json
+    
+    try:
+        from email_service import EmailService
+        email_service = EmailService()
+        
+        # Create email content
+        subject = "Welcome to Glimmer HRMS - Your Login Credentials"
+        body = f"""
+Dear {data['name']},
+
+Welcome to Glimmer Limited HRMS!
+
+Your account has been created. Here are your login credentials:
+
+Username: {data['username']}
+Temporary Password: {data['password']}
+
+Please login at: http://localhost:3000
+
+IMPORTANT: Change your password immediately after first login for security.
+
+If you have any questions, please contact HR.
+
+Best regards,
+Glimmer Limited HR Team
+        """
+        
+        # Send email
+        import smtplib
+        from email.mime.text import MIMEText
+        
+        msg = MIMEText(body)
+        msg['Subject'] = subject
+        msg['From'] = email_service.sender_email
+        msg['To'] = data['email']
+        
+        with smtplib.SMTP(email_service.smtp_server, email_service.smtp_port) as server:
+            server.starttls()
+            server.login(email_service.sender_email, email_service.sender_password)
+            server.send_message(msg)
+        
+        return jsonify({"msg": "Welcome email sent"}), 200
+    except Exception as e:
+        return jsonify({"msg": f"Failed to send email: {str(e)}"}), 500
+
+
+
+@app.route("/payroll/payslip/<int:payroll_id>/pdf", methods=["GET"])
+@jwt_required()
+def download_payslip_pdf(payroll_id):
+    """Download payslip as PDF"""
+    from pdf_service import pdf_generator
+    from flask import send_file
+    
+    current_user = get_jwt_identity()
+    user = User.query.filter_by(username=current_user).first()
+    
+    payroll = Payroll.query.get_or_404(payroll_id)
+    employee = Employee.query.get(payroll.employee_id)
+    
+    # Authorization check - employees can only view their own payslips
+    if user.role == 'Employee':
+        emp = Employee.query.filter_by(name=user.username).first()
+        if not emp or emp.id != payroll.employee_id:
+            return jsonify({"msg": "Unauthorized"}), 403
+    
+    # Prepare employee data
+    employee_data = {
+        'id': employee.id,
+        'name': employee.name,
+        'national_id': employee.national_id,
+        'department': employee.department,
+        'position': getattr(employee, 'position', 'Employee')
+    }
+    
+    # Prepare payroll data
+    payroll_data = {
+        'id': payroll.id,
+        'period_start': payroll.period_start.strftime('%Y-%m-%d'),
+        'period_end': payroll.period_end.strftime('%Y-%m-%d'),
+        'gross_salary': payroll.gross_salary,
+        'nssf': payroll.nssf,
+        'nhif': payroll.nhif,
+        'paye': payroll.paye,
+        'housing_levy': payroll.housing_levy,
+        'total_deductions': payroll.total_deductions,
+        'net_salary': payroll.net_salary,
+        'allowances': 0,
+        'bonuses': 0,
+        'other_deductions': 0
+    }
+    
+    # Generate PDF
+    pdf_buffer = pdf_generator.generate_payslip(employee_data, payroll_data)
+    
+    # Log audit
+    log_audit_action_safe(
+        db,
+        action_type="DOWNLOAD_PAYSLIP",
+        description=f"Downloaded payslip PDF for employee {employee.name}",
+        module="PAYROLL",
+        user_id=user.id,
+        ip_address=request.remote_addr
+    )
+    
+    # Return PDF
+    return send_file(
+        pdf_buffer,
+        mimetype='application/pdf',
+        as_attachment=True,
+        download_name=f'payslip_{employee.name.replace(" ", "_")}_{payroll.period_start.strftime("%Y%m")}.pdf'
+    )
+
+
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    app.run(debug=True, host="0.0.0.0", port=5000)

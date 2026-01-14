@@ -31,7 +31,7 @@ def seed_system_users():
     users_data = [
         {
             "username": "admin",
-            "password": "AdminPass123",
+            "password": "admin123",
             "role": "Admin",
             "email": "admin@glimmer.com",
             "phone": "+254700000001"
@@ -216,7 +216,7 @@ def print_summary():
         print(f"   • Username: {emp.user.username:15} | Password: password123 | {emp.name:25} ({emp.department})")
     
     print(f"\n🔐 System User Logins:")
-    print(f"   • Username: admin         | Password: AdminPass123     | Admin")
+    print(f"   • Username: admin         | Password: admin123     | Admin")
     print(f"   • Username: hr_officer    | Password: OfficerPass123   | HR Officer")
     print(f"   • Username: dept_manager  | Password: DeptPass123      | Department Manager")
     
