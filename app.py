@@ -899,7 +899,7 @@ def get_my_info():
             return jsonify({'error': 'This endpoint is for employees only'}), 403
         
         # Find the employee record by matching username to employee name
-        employee = Employee.query.filter_by(name=user.username).first()
+        employee = Employee.query.filter_by(user_id=user.id).first()
         
         if not employee:
             return jsonify({
@@ -2615,7 +2615,7 @@ def get_my_attendance():
         return jsonify([]), 200
     
     # Get attendance records (last 30 days)
-    thirty_days_ago = datetime.now().date() - timedelta(days=30)
+    thirty_days_ago = datetime.now().date() - timedelta(days=120)
     
     attendance_records = Attendance.query.filter(
         Attendance.employee_id == employee.id,
@@ -2675,8 +2675,9 @@ def get_my_leaves():
         token = auth_header.split(' ')[1]
         
         try:
-            payload = PyJWT.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
-            username = payload.get('sub')  # ✅ FIXED: Get username from 'sub' field
+            # ✅ FIXED: Use JWT_SECRET_KEY instead of SECRET_KEY
+            payload = PyJWT.decode(token, app.config['JWT_SECRET_KEY'], algorithms=['HS256'])
+            username = payload.get('sub')
             
             if not username:
                 return jsonify({'error': 'Invalid token'}), 401
@@ -2689,12 +2690,12 @@ def get_my_leaves():
             app.logger.error(f'JWT decode error: {str(e)}')
             return jsonify({'error': 'Token error'}), 401
         
-        # Get user by username (not user_id)
+        # Get user by username
         user = User.query.filter_by(username=username).first()
         if not user:
             return jsonify({'error': 'User not found'}), 404
         
-        # Get employee record
+                # Get employee record
         employee = None
         if hasattr(user, 'employee_profile'):
             if isinstance(user.employee_profile, list):
@@ -2748,8 +2749,9 @@ def create_employee_leave_request():
         token = auth_header.split(' ')[1]
         
         try:
-            payload = PyJWT.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
-            username = payload.get('sub')  # ✅ FIXED: Get username from 'sub' field
+            # ✅ FIXED: Use JWT_SECRET_KEY instead of SECRET_KEY
+            payload = PyJWT.decode(token, app.config['JWT_SECRET_KEY'], algorithms=['HS256'])
+            username = payload.get('sub')
             
             if not username:
                 return jsonify({'error': 'Invalid token'}), 401
@@ -2767,7 +2769,7 @@ def create_employee_leave_request():
         if not user:
             return jsonify({'error': 'User not found'}), 404
         
-        # Get employee record
+                # Get employee record
         employee = None
         if hasattr(user, 'employee_profile'):
             if isinstance(user.employee_profile, list):
