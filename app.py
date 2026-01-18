@@ -6,6 +6,7 @@ from flask_jwt_extended import (
 from datetime import datetime, timedelta
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_cors import CORS
+import jwt as PyJWT  
 import os, sys
 sys.path.append(os.path.dirname(__file__))
 
@@ -13,7 +14,7 @@ from middleware.auth import load_current_user
 from database import db
 from utils.audit_logger import log_audit_action_safe, log_audit_action_enhanced, log_security_event
 from utils.sod_checker import check_payroll_separation, SeparationOfDutiesViolation
-from models import User, Employee, Attendance, Payroll, AuditTrail, Anomaly, ApprovalRequest, SecurityEvent, SeparationOfDutiesLog
+from models import User, Employee, Attendance, Payroll, AuditTrail, Anomaly, ApprovalRequest, SecurityEvent, SeparationOfDutiesLog, LeaveRequest
 from flask_mail import Mail, Message
 from dotenv import load_dotenv
 from sqlalchemy import extract, and_, func
@@ -28,12 +29,15 @@ import logging
 from logging.handlers import RotatingFileHandler
 import secrets
 
+
+
 # Import validators
 from validators import (
     validate_email, validate_password, validate_national_id,
     validate_phone, validate_username, validate_salary,
     sanitize_string, validate_required_fields
 )
+
 
 # Load environment variables FIRST
 load_dotenv()
@@ -48,6 +52,7 @@ app = Flask(__name__)
 
 from config import Config
 app.config.from_object(Config)
+
 
 # =====================================================
 # CORS CONFIGURATION - UPDATED WITH SECURITY
@@ -461,7 +466,17 @@ def login():
     access_token = create_access_token(identity=user.username, expires_delta=expires)
     
     # Get linked employee profile if exists
-    employee_profile = user.employee_profile
+    # Note: employee_profile can be a list or single object depending on relationship
+    employee_profile = None
+    if hasattr(user, 'employee_profile'):
+        if isinstance(user.employee_profile, list):
+            employee_profile = user.employee_profile[0] if user.employee_profile else None
+        else:
+            employee_profile = user.employee_profile
+    
+    # Also try to find by user_id
+    if not employee_profile:
+        employee_profile = Employee.query.filter_by(user_id=user.id).first()
     
     # Build response with role and employee data
     response_data = {
@@ -1957,6 +1972,196 @@ def delete_notification(notification_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+# =====================================================
+# EMPLOYEE PROFILE ENDPOINTS
+# =====================================================
+
+@app.route('/api/employee/profile', methods=['GET'])
+@jwt_required()
+def get_employee_profile():
+    """Get current employee's profile data"""
+    try:
+        current_username = get_jwt_identity()
+        user = User.query.filter_by(username=current_username).first()
+        
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Get the linked employee profile
+        # Handle both list and single object cases
+        employee = None
+        if hasattr(user, 'employee_profile'):
+            if isinstance(user.employee_profile, list):
+                employee = user.employee_profile[0] if user.employee_profile else None
+            else:
+                employee = user.employee_profile
+        
+        # Also try to find by user_id
+        if not employee:
+            employee = Employee.query.filter_by(user_id=user.id).first()
+        
+        if not employee:
+            # If no employee profile linked, return user data only
+            log_audit_action_safe(
+                db,
+                action_type="PROFILE_VIEW_NO_EMPLOYEE",
+                description=f"User {user.username} viewed profile (no employee link)",
+                module="PROFILE",
+                user_id=user.id,
+                ip_address=request.remote_addr
+            )
+            
+            return jsonify({
+                'first_name': user.username.split()[0] if ' ' in user.username else user.username,
+                'last_name': user.username.split()[1] if len(user.username.split()) > 1 else '',
+                'email': user.email or '',
+                'phone': user.phone or '',
+                'department': 'General',
+                'position': user.role.replace('_', ' ').title(),
+                'employee_id': 'N/A',
+                'date_joined': user.created_at.strftime('%B %d, %Y') if user.created_at else '',
+                'address': '',
+                'emergency_contact': '',
+                'emergency_name': ''
+            }), 200
+        
+        # Return complete employee profile
+        log_audit_action_safe(
+            db,
+            action_type="PROFILE_VIEW",
+            description=f"Employee {employee.name} viewed their profile",
+            module="PROFILE",
+            user_id=user.id,
+            ip_address=request.remote_addr
+        )
+        
+        profile_data = {
+            'id': employee.id,
+            'employee_id': employee.national_id,
+            'first_name': employee.name.split()[0] if employee.name else '',
+            'last_name': ' '.join(employee.name.split()[1:]) if len(employee.name.split()) > 1 else '',
+            'email': employee.email or user.email or '',
+            'phone': employee.phone_number or user.phone or '',
+            'department': employee.department or 'General',
+            'position': employee.position or 'Employee',
+            'job_title': employee.position or 'Employee',
+            'date_joined': employee.join_date.strftime('%B %d, %Y') if employee.join_date else '',
+            'hire_date': employee.join_date.strftime('%Y-%m-%d') if employee.join_date else '',
+            'address': getattr(employee, 'address', ''),
+            'emergency_contact': getattr(employee, 'emergency_contact', ''),
+            'emergency_phone': getattr(employee, 'emergency_contact', ''),
+            'emergency_name': getattr(employee, 'emergency_name', ''),
+            'emergency_contact_name': getattr(employee, 'emergency_name', ''),
+            'leave_balance': employee.leave_balance or 0,
+            'base_salary': employee.base_salary,
+            'active': employee.active
+        }
+        
+        return jsonify(profile_data), 200
+        
+    except Exception as e:
+        app.logger.error(f"Error fetching employee profile: {str(e)}")
+        return jsonify({'error': 'Failed to fetch profile data'}), 500
+
+
+@app.route('/api/employee/profile', methods=['PUT'])
+@jwt_required()
+def update_employee_profile():
+    """Update current employee's profile data"""
+    try:
+        current_username = get_jwt_identity()
+        user = User.query.filter_by(username=current_username).first()
+        
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        data = request.get_json()
+        
+        # Validate input data
+        if 'email' in data and data['email']:
+            if not validate_email(data['email']):
+                return jsonify({'error': 'Invalid email format'}), 400
+        
+        if 'phone' in data and data['phone']:
+            if not validate_phone(data['phone']):
+                return jsonify({'error': 'Invalid phone format'}), 400
+        
+        # Get the linked employee profile
+        # Handle both list and single object cases
+        employee = None
+        if hasattr(user, 'employee_profile'):
+            if isinstance(user.employee_profile, list):
+                employee = user.employee_profile[0] if user.employee_profile else None
+            else:
+                employee = user.employee_profile
+        
+        # Also try to find by user_id
+        if not employee:
+            employee = Employee.query.filter_by(user_id=user.id).first()
+        
+        if employee:
+            # Update employee fields
+            if 'first_name' in data or 'last_name' in data:
+                first_name = sanitize_string(data.get('first_name', employee.name.split()[0]))
+                last_name = sanitize_string(data.get('last_name', ''))
+                employee.name = f"{first_name} {last_name}".strip()
+            
+            if 'email' in data:
+                employee.email = sanitize_string(data['email'])
+                user.email = employee.email
+            
+            if 'phone' in data:
+                employee.phone_number = sanitize_string(data['phone'])
+                user.phone = employee.phone_number
+            
+            # Update emergency contact fields if they exist in the model
+            if hasattr(employee, 'address') and 'address' in data:
+                employee.address = sanitize_string(data['address'])
+            
+            if hasattr(employee, 'emergency_contact') and 'emergency_contact' in data:
+                employee.emergency_contact = sanitize_string(data['emergency_contact'])
+            
+            if hasattr(employee, 'emergency_name') and 'emergency_name' in data:
+                employee.emergency_name = sanitize_string(data['emergency_name'])
+        else:
+            # Update user fields only if no employee profile
+            if 'first_name' in data or 'last_name' in data:
+                first_name = sanitize_string(data.get('first_name', user.username.split()[0]))
+                last_name = sanitize_string(data.get('last_name', ''))
+                user.username = f"{first_name} {last_name}".strip()
+            
+            if 'email' in data:
+                user.email = sanitize_string(data['email'])
+            
+            if 'phone' in data:
+                user.phone = sanitize_string(data['phone'])
+        
+        db.session.commit()
+        
+        log_audit_action_safe(
+            db,
+            action_type="PROFILE_UPDATE",
+            description=f"User {user.username} updated their profile",
+            module="PROFILE",
+            user_id=user.id,
+            ip_address=request.remote_addr
+        )
+        
+        return jsonify({
+            'success': True,
+            'message': 'Profile updated successfully'
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error updating employee profile: {str(e)}")
+        return jsonify({'error': 'Failed to update profile'}), 500
+
+
+# =====================================================
+# USER PROFILE ENDPOINTS (Original)
+# =====================================================
+
 @app.route('/api/user/profile', methods=['GET'])
 @jwt_required()
 def get_profile():
@@ -2453,129 +2658,172 @@ def check_roles():
         })
     return jsonify(result), 200
 
+
+
+
+# ============================================================================
+# EMPLOYEE LEAVE ENDPOINTS - COMPLETE ERROR-PROOF VERSION
+# ============================================================================
+@app.route('/my-leaves', methods=['GET'])
+@limiter.limit("100 per hour")
+def get_my_leaves():
+    try:
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({'error': 'Missing authorization'}), 401
+        
+        token = auth_header.split(' ')[1]
+        
+        try:
+            payload = PyJWT.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
+            username = payload.get('sub')  # ✅ FIXED: Get username from 'sub' field
+            
+            if not username:
+                return jsonify({'error': 'Invalid token'}), 401
+                
+        except PyJWT.ExpiredSignatureError:
+            return jsonify({'error': 'Token expired'}), 401
+        except PyJWT.InvalidTokenError:
+            return jsonify({'error': 'Invalid token'}), 401
+        except Exception as e:
+            app.logger.error(f'JWT decode error: {str(e)}')
+            return jsonify({'error': 'Token error'}), 401
+        
+        # Get user by username (not user_id)
+        user = User.query.filter_by(username=username).first()
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Get employee record
+        employee = None
+        if hasattr(user, 'employee_profile'):
+            if isinstance(user.employee_profile, list):
+                employee = user.employee_profile[0] if user.employee_profile else None
+            else:
+                employee = user.employee_profile
+        
+        if not employee:
+            employee = Employee.query.filter_by(user_id=user.id).first()
+        
+        if not employee:
+            return jsonify([]), 200
+        
+        # Get leave requests
+        try:
+            leaves = LeaveRequest.query.filter_by(employee_id=employee.id).order_by(LeaveRequest.id.desc()).all()
+        except Exception as db_error:
+            app.logger.error(f'Database error: {str(db_error)}')
+            return jsonify([]), 200
+        
+        result = []
+        for leave in leaves:
+            result.append({
+                'id': leave.id,
+                'employee_id': leave.employee_id,
+                'leave_type': leave.leave_type,
+                'start_date': leave.start_date.strftime('%Y-%m-%d'),
+                'end_date': leave.end_date.strftime('%Y-%m-%d'),
+                'days_requested': leave.days_requested,
+                'reason': leave.reason,
+                'status': leave.status,
+                'response_note': getattr(leave, 'response_note', None),
+                'created_at': leave.created_at.strftime('%Y-%m-%d') if hasattr(leave, 'created_at') and leave.created_at else None
+            })
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        app.logger.error(f'Error in get_my_leaves: {str(e)}')
+        return jsonify([]), 200
+
+
+@app.route('/leaves', methods=['POST'], endpoint='employee_create_leave')
+@limiter.limit("20 per hour")
+def create_employee_leave_request():
+    try:
+        auth_header = request.headers.get('Authorization')
+        if not auth_header:
+            return jsonify({'error': 'Missing authorization'}), 401
+        
+        token = auth_header.split(' ')[1]
+        
+        try:
+            payload = PyJWT.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
+            username = payload.get('sub')  # ✅ FIXED: Get username from 'sub' field
+            
+            if not username:
+                return jsonify({'error': 'Invalid token'}), 401
+                
+        except PyJWT.ExpiredSignatureError:
+            return jsonify({'error': 'Token expired'}), 401
+        except PyJWT.InvalidTokenError:
+            return jsonify({'error': 'Invalid token'}), 401
+        except Exception as e:
+            app.logger.error(f'JWT decode error: {str(e)}')
+            return jsonify({'error': 'Token error'}), 401
+        
+        # Get user by username
+        user = User.query.filter_by(username=username).first()
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Get employee record
+        employee = None
+        if hasattr(user, 'employee_profile'):
+            if isinstance(user.employee_profile, list):
+                employee = user.employee_profile[0] if user.employee_profile else None
+            else:
+                employee = user.employee_profile
+        
+        if not employee:
+            employee = Employee.query.filter_by(user_id=user.id).first()
+        
+        if not employee:
+            return jsonify({'error': 'Employee not found'}), 404
+        
+        data = request.get_json()
+        
+        # Validate data
+        if not all(k in data for k in ['leave_type', 'start_date', 'end_date', 'reason']):
+            return jsonify({'error': 'Missing required fields'}), 400
+        
+        # Parse dates
+        start_date = datetime.strptime(data['start_date'], '%Y-%m-%d').date()
+        end_date = datetime.strptime(data['end_date'], '%Y-%m-%d').date()
+        days = (end_date - start_date).days + 1
+        
+        # Create leave request
+        new_leave = LeaveRequest(
+            employee_id=employee.id,
+            leave_type=data['leave_type'].capitalize(),
+            start_date=start_date,
+            end_date=end_date,
+            days_requested=days,
+            reason=data['reason'],
+            status='Pending',
+            created_at=datetime.now()
+        )
+        
+        db.session.add(new_leave)
+        db.session.commit()
+        
+        return jsonify({
+            'id': new_leave.id, 
+            'message': 'Leave request submitted successfully'
+        }), 201
+        
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f'Error creating leave: {str(e)}')
+        return jsonify({'error': str(e)}), 500
+    
+# ============================================================================
+# END OF EMPLOYEE LEAVE ENDPOINTS
+# ============================================================================
+
 # =====================================================
 # MAIN
 # =====================================================
-
-
-@app.route("/send-welcome-email", methods=["POST"])
-@jwt_required()
-def send_welcome_email():
-    """Send welcome email with login credentials"""
-    data = request.json
-    
-    try:
-        from email_service import EmailService
-        email_service = EmailService()
-        
-        # Create email content
-        subject = "Welcome to Glimmer HRMS - Your Login Credentials"
-        body = f"""
-Dear {data['name']},
-
-Welcome to Glimmer Limited HRMS!
-
-Your account has been created. Here are your login credentials:
-
-Username: {data['username']}
-Temporary Password: {data['password']}
-
-Please login at: http://localhost:3000
-
-IMPORTANT: Change your password immediately after first login for security.
-
-If you have any questions, please contact HR.
-
-Best regards,
-Glimmer Limited HR Team
-        """
-        
-        # Send email
-        import smtplib
-        from email.mime.text import MIMEText
-        
-        msg = MIMEText(body)
-        msg['Subject'] = subject
-        msg['From'] = email_service.sender_email
-        msg['To'] = data['email']
-        
-        with smtplib.SMTP(email_service.smtp_server, email_service.smtp_port) as server:
-            server.starttls()
-            server.login(email_service.sender_email, email_service.sender_password)
-            server.send_message(msg)
-        
-        return jsonify({"msg": "Welcome email sent"}), 200
-    except Exception as e:
-        return jsonify({"msg": f"Failed to send email: {str(e)}"}), 500
-
-
-
-@app.route("/payroll/payslip/<int:payroll_id>/pdf", methods=["GET"])
-@jwt_required()
-def download_payslip_pdf(payroll_id):
-    """Download payslip as PDF"""
-    from pdf_service import pdf_generator
-    from flask import send_file
-    
-    current_user = get_jwt_identity()
-    user = User.query.filter_by(username=current_user).first()
-    
-    payroll = Payroll.query.get_or_404(payroll_id)
-    employee = Employee.query.get(payroll.employee_id)
-    
-    # Authorization check - employees can only view their own payslips
-    if user.role == 'Employee':
-        emp = Employee.query.filter_by(name=user.username).first()
-        if not emp or emp.id != payroll.employee_id:
-            return jsonify({"msg": "Unauthorized"}), 403
-    
-    # Prepare employee data
-    employee_data = {
-        'id': employee.id,
-        'name': employee.name,
-        'national_id': employee.national_id,
-        'department': employee.department,
-        'position': getattr(employee, 'position', 'Employee')
-    }
-    
-    # Prepare payroll data
-    payroll_data = {
-        'id': payroll.id,
-        'period_start': payroll.period_start.strftime('%Y-%m-%d'),
-        'period_end': payroll.period_end.strftime('%Y-%m-%d'),
-        'gross_salary': payroll.gross_salary,
-        'nssf': payroll.nssf,
-        'nhif': payroll.nhif,
-        'paye': payroll.paye,
-        'housing_levy': payroll.housing_levy,
-        'total_deductions': payroll.total_deductions,
-        'net_salary': payroll.net_salary,
-        'allowances': 0,
-        'bonuses': 0,
-        'other_deductions': 0
-    }
-    
-    # Generate PDF
-    pdf_buffer = pdf_generator.generate_payslip(employee_data, payroll_data)
-    
-    # Log audit
-    log_audit_action_safe(
-        db,
-        action_type="DOWNLOAD_PAYSLIP",
-        description=f"Downloaded payslip PDF for employee {employee.name}",
-        module="PAYROLL",
-        user_id=user.id,
-        ip_address=request.remote_addr
-    )
-    
-    # Return PDF
-    return send_file(
-        pdf_buffer,
-        mimetype='application/pdf',
-        as_attachment=True,
-        download_name=f'payslip_{employee.name.replace(" ", "_")}_{payroll.period_start.strftime("%Y%m")}.pdf'
-    )
-
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=5000)

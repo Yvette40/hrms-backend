@@ -370,3 +370,43 @@ class Notification(db.Model):
     
     # Relationship
     user = db.relationship("User", backref="notifications")
+
+    # ============================================================================
+# HELPER: Make sure LeaveRequest model exists
+# ============================================================================
+
+# ADD THIS TO YOUR models.py IF IT DOESN'T EXIST:
+
+
+class LeaveRequest(db.Model):
+    __tablename__ = 'leave_requests'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    employee_id = db.Column(db.Integer, db.ForeignKey('employee.id'), nullable=False)
+    leave_type = db.Column(db.String(50), nullable=False)  # Annual, Sick, Personal, Emergency
+    start_date = db.Column(db.Date, nullable=False)
+    end_date = db.Column(db.Date, nullable=False)
+    days_requested = db.Column(db.Integer, nullable=False)
+    reason = db.Column(db.Text)
+    status = db.Column(db.String(20), default='Pending')  # Pending, Approved, Rejected
+    response_note = db.Column(db.Text)  # Admin response when approving/rejecting
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    employee = db.relationship('Employee', backref='leave_requests')
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'employee_id': self.employee_id,
+            'employee_name': self.employee.name if self.employee else None,
+            'leave_type': self.leave_type,
+            'start_date': self.start_date.strftime('%Y-%m-%d') if self.start_date else None,
+            'end_date': self.end_date.strftime('%Y-%m-%d') if self.end_date else None,
+            'days_requested': self.days_requested,
+            'reason': self.reason,
+            'status': self.status,
+            'response_note': self.response_note,
+            'created_at': self.created_at.strftime('%Y-%m-%d %H:%M:%S') if self.created_at else None
+        }
