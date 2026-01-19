@@ -88,9 +88,14 @@ class Attendance(db.Model):
     recorded_by = db.Column(db.Integer, db.ForeignKey('user.id'))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
+    # ✅ Biometric fields
+    check_in_time = db.Column(db.String(10))  # Format: HH:MM
+    check_out_time = db.Column(db.String(10))  # Format: HH:MM
+    hours_worked = db.Column(db.Float)
+    notes = db.Column(db.Text)
+    
     # Relationships
     employee = db.relationship('Employee', backref='attendances')
-
 
 # =======================
 # PAYROLL (COMPLETE VERSION)
