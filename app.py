@@ -2606,7 +2606,6 @@ def get_my_payslips():
 # =====================================================
 # ATTENDANCE - MY ATTENDANCE ENDPOINT
 # =====================================================
-
 @app.route("/my-attendance", methods=["GET"])
 @jwt_required()
 def get_my_attendance():
@@ -2640,12 +2639,20 @@ def get_my_attendance():
             'id': att.id,
             'date': att.date.strftime('%Y-%m-%d'),
             'status': att.status,
-            'day_of_week': att.date.strftime('%A')
+            'day_of_week': att.date.strftime('%A'),
+            # ========== CHANGES START HERE ==========
+            'check_in_time': str(att.check_in_time) if att.check_in_time else None,  # ✅ NEW: Added check-in time
+            'check_out_time': str(att.check_out_time) if att.check_out_time else None,  # ✅ NEW: Added check-out time
+            'hours_worked': att.hours_worked if att.hours_worked else None,  # ✅ NEW: Added hours worked
+            'notes': att.notes if att.notes else None  # ✅ NEW: Added notes
+            # ========== CHANGES END HERE ==========
         })
     
     # Calculate stats
     total_days = len(attendance_records)
     present_days = len([a for a in attendance_records if a.status == 'Present'])
+    absent_days = len([a for a in attendance_records if a.status == 'Absent'])  # ✅ NEW: Calculate absent days
+    late_days = len([a for a in attendance_records if a.status == 'Late'])  # ✅ NEW: Calculate late days
     attendance_rate = round((present_days / total_days * 100), 1) if total_days > 0 else 0
     
     return jsonify({
@@ -2653,7 +2660,8 @@ def get_my_attendance():
         'stats': {
             'total_days': total_days,
             'present_days': present_days,
-            'absent_days': total_days - present_days,
+            'absent_days': absent_days,  # ✅ NEW: Added to stats response
+            'late_days': late_days,  # ✅ NEW: Added to stats response
             'attendance_rate': attendance_rate
         }
     }), 200
