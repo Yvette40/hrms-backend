@@ -1,4 +1,28 @@
 """
+Quick Fix for Missing log_sod_check Function
+This adds the missing function to audit_logger.py
+"""
+
+import os
+import shutil
+from datetime import datetime
+
+def fix_audit_logger():
+    """Add missing log_sod_check function to audit_logger.py"""
+    
+    logger_path = os.path.join('utils', 'audit_logger.py')
+    
+    if not os.path.exists(logger_path):
+        print("❌ utils/audit_logger.py not found!")
+        return False
+    
+    # Backup
+    backup_name = f"audit_logger_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.py"
+    shutil.copy(logger_path, backup_name)
+    print(f"✅ Backup created: {backup_name}")
+    
+    # Complete audit logger with ALL functions
+    complete_content = '''"""
 Complete Audit Logger with Database Lock Protection
 Includes all required functions for HRMS system
 """
@@ -177,3 +201,47 @@ def log_action(db, user_id, action, module, details=None, ip_address=None):
         user_id=user_id,
         ip_address=ip_address
     )
+'''
+    
+    # Write the complete content
+    with open(logger_path, 'w', encoding='utf-8') as f:
+        f.write(complete_content)
+    
+    print("✅ Added log_sod_check function to audit_logger.py")
+    print("✅ All functions now available")
+    
+    return True
+
+
+if __name__ == '__main__':
+    print("=" * 60)
+    print("FIX MISSING log_sod_check FUNCTION")
+    print("=" * 60)
+    print()
+    
+    if not os.path.exists('utils'):
+        print("❌ 'utils' directory not found!")
+        print("   Run this script from your project root directory")
+        exit(1)
+    
+    print("This will add the missing log_sod_check function")
+    print("to utils/audit_logger.py")
+    print()
+    
+    response = input("Continue? (y/n): ").strip().lower()
+    
+    if response == 'y':
+        success = fix_audit_logger()
+        
+        if success:
+            print()
+            print("=" * 60)
+            print("✅ FIX COMPLETE!")
+            print("=" * 60)
+            print()
+            print("Now run: python app.py")
+        else:
+            print()
+            print("❌ Fix failed")
+    else:
+        print("\n❌ Cancelled")

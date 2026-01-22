@@ -48,7 +48,10 @@ class Employee(db.Model):
     phone_number = db.Column(db.String(20))
     join_date = db.Column(db.Date, default=datetime.now().date)
     leave_balance = db.Column(db.Integer, default=21)  # Annual leave days
-    
+    address = db.Column(db.String(200)) 
+    emergency_name = db.Column(db.String(100))  # ✅ Add back if needed
+    emergency_contact = db.Column(db.String(20))
+
     active = db.Column(db.Boolean, default=True)
     
     # 🆕 Link to user account (for Employee role)
@@ -376,5 +379,53 @@ class Notification(db.Model):
     # Relationship
     user = db.relationship("User", backref="notifications")
 
+
+
     # ============================================================================
-#
+class UserSettings(db.Model):
+    __tablename__ = 'user_settings'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), unique=True, nullable=False)
+    
+    # Notification Preferences
+    email_notifications = db.Column(db.Boolean, default=True)
+    push_notifications = db.Column(db.Boolean, default=True)
+    sms_notifications = db.Column(db.Boolean, default=False)
+    
+    # Notification Types
+    leave_requests = db.Column(db.Boolean, default=True)
+    payroll_alerts = db.Column(db.Boolean, default=True)
+    attendance_reminders = db.Column(db.Boolean, default=True)
+    
+    # Security Settings
+    two_factor_auth = db.Column(db.Boolean, default=False)
+    session_timeout = db.Column(db.Integer, default=30)
+    
+    # Display Preferences
+    theme = db.Column(db.String(20), default='light')
+    language = db.Column(db.String(10), default='en')
+    date_format = db.Column(db.String(20), default='MM/DD/YYYY')
+    time_format = db.Column(db.String(10), default='12h')
+    
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    user = db.relationship('User', backref=db.backref('settings', uselist=False))
+    
+    def to_dict(self):
+        return {
+            'emailNotifications': self.email_notifications,
+            'pushNotifications': self.push_notifications,
+            'smsNotifications': self.sms_notifications,
+            'leaveRequests': self.leave_requests,
+            'payrollAlerts': self.payroll_alerts,
+            'attendanceReminders': self.attendance_reminders,
+            'twoFactorAuth': self.two_factor_auth,
+            'sessionTimeout': str(self.session_timeout),
+            'theme': self.theme,
+            'language': self.language,
+            'dateFormat': self.date_format,
+            'timeFormat': self.time_format
+        }

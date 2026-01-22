@@ -1,21 +1,20 @@
-"""
-Complete Audit Logger with Database Lock Protection
-Includes all required functions for HRMS system
-"""
+# Replace your utils/audit_logger.py with this improved version:
 
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from datetime import datetime, UTC
 import time
 
-
 def log_audit_action_safe(db, action_type, description, module, user_id=None, ip_address=None, action_type_category="Normal"):
-    """Safe audit logging with automatic rollback on failure"""
+    """
+    Safe audit logging with automatic rollback on failure
+    """
     max_retries = 3
     
     for attempt in range(max_retries):
         try:
             from models import AuditTrail
             
+            # Use a separate session for audit logging
             audit_entry = AuditTrail(
                 user_id=user_id,
                 action=action_type,
@@ -27,21 +26,26 @@ def log_audit_action_safe(db, action_type, description, module, user_id=None, ip
             )
             
             db.session.add(audit_entry)
-            db.session.flush()
+            db.session.flush()  # Flush instead of commit
             db.session.commit()
             return True
             
         except OperationalError as e:
-            db.session.rollback()
-            if "database is locked" in str(e) and attempt < max_retries - 1:
-                time.sleep(0.1 * (attempt + 1))
-                continue
+            if "database is locked" in str(e):
+                db.session.rollback()  # CRITICAL: Rollback the session
+                if attempt < max_retries - 1:
+                    time.sleep(0.1 * (attempt + 1))  # Short delay
+                    continue
+                else:
+                    print(f"⚠️ Audit log failed after {max_retries} attempts (DB locked)")
+                    return False
             else:
-                print(f"⚠️ Audit log failed: {e}")
+                db.session.rollback()
+                print(f"⚠️ Audit log DB error: {e}")
                 return False
                 
         except Exception as e:
-            db.session.rollback()
+            db.session.rollback()  # CRITICAL: Always rollback on error
             print(f"⚠️ Audit log error: {e}")
             return False
     
@@ -49,7 +53,7 @@ def log_audit_action_safe(db, action_type, description, module, user_id=None, ip
 
 
 def log_audit_action_enhanced(db, user_id, action, module, old_value=None, new_value=None, details=None, ip_address=None):
-    """Enhanced audit logging with retry logic"""
+    """Enhanced audit logging with retry"""
     max_retries = 3
     
     for attempt in range(max_retries):
@@ -73,11 +77,16 @@ def log_audit_action_enhanced(db, user_id, action, module, old_value=None, new_v
             return True
             
         except OperationalError as e:
-            db.session.rollback()
-            if "database is locked" in str(e) and attempt < max_retries - 1:
-                time.sleep(0.1 * (attempt + 1))
-                continue
+            if "database is locked" in str(e):
+                db.session.rollback()
+                if attempt < max_retries - 1:
+                    time.sleep(0.1 * (attempt + 1))
+                    continue
+                else:
+                    print(f"⚠️ Enhanced audit log failed (DB locked)")
+                    return False
             else:
+                db.session.rollback()
                 return False
                 
         except Exception as e:
@@ -88,7 +97,7 @@ def log_audit_action_enhanced(db, user_id, action, module, old_value=None, new_v
 
 
 def log_security_event(db, event_type, description, severity="Low", user_id=None, ip_address=None):
-    """Log security events with retry logic"""
+    """Log security events with retry"""
     max_retries = 3
     
     for attempt in range(max_retries):
@@ -110,11 +119,16 @@ def log_security_event(db, event_type, description, severity="Low", user_id=None
             return True
             
         except OperationalError as e:
-            db.session.rollback()
-            if "database is locked" in str(e) and attempt < max_retries - 1:
-                time.sleep(0.1 * (attempt + 1))
-                continue
+            if "database is locked" in str(e):
+                db.session.rollback()
+                if attempt < max_retries - 1:
+                    time.sleep(0.1 * (attempt + 1))
+                    continue
+                else:
+                    print(f"⚠️ Security event log failed (DB locked)")
+                    return False
             else:
+                db.session.rollback()
                 return False
                 
         except Exception as e:
@@ -122,58 +136,3 @@ def log_security_event(db, event_type, description, severity="Low", user_id=None
             return False
     
     return False
-
-
-def log_sod_check(db, check_type, user_id, action, result, details=None):
-    """
-    Log Separation of Duties (SOD) checks
-    Required by sod_checker.py
-    """
-    max_retries = 3
-    
-    for attempt in range(max_retries):
-        try:
-            from models import SeparationOfDutiesLog
-            
-            sod_log = SeparationOfDutiesLog(
-                check_type=check_type,
-                user_id=user_id,
-                action=action,
-                result=result,
-                details=details,
-                timestamp=datetime.now(UTC).replace(tzinfo=None)
-            )
-            
-            db.session.add(sod_log)
-            db.session.flush()
-            db.session.commit()
-            return True
-            
-        except OperationalError as e:
-            db.session.rollback()
-            if "database is locked" in str(e) and attempt < max_retries - 1:
-                time.sleep(0.1 * (attempt + 1))
-                continue
-            else:
-                print(f"⚠️ SOD log failed: {e}")
-                return False
-                
-        except Exception as e:
-            db.session.rollback()
-            print(f"⚠️ SOD log error: {e}")
-            return False
-    
-    return False
-
-
-# Backward compatibility aliases
-def log_action(db, user_id, action, module, details=None, ip_address=None):
-    """Alias for log_audit_action_safe"""
-    return log_audit_action_safe(
-        db=db,
-        action_type=action,
-        description=details or action,
-        module=module,
-        user_id=user_id,
-        ip_address=ip_address
-    )

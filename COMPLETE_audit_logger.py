@@ -9,7 +9,9 @@ import time
 
 
 def log_audit_action_safe(db, action_type, description, module, user_id=None, ip_address=None, action_type_category="Normal"):
-    """Safe audit logging with automatic rollback on failure"""
+    """
+    Safe audit logging with automatic rollback on failure
+    """
     max_retries = 3
     
     for attempt in range(max_retries):
@@ -49,7 +51,9 @@ def log_audit_action_safe(db, action_type, description, module, user_id=None, ip
 
 
 def log_audit_action_enhanced(db, user_id, action, module, old_value=None, new_value=None, details=None, ip_address=None):
-    """Enhanced audit logging with retry logic"""
+    """
+    Enhanced audit logging with retry logic
+    """
     max_retries = 3
     
     for attempt in range(max_retries):
@@ -88,7 +92,9 @@ def log_audit_action_enhanced(db, user_id, action, module, old_value=None, new_v
 
 
 def log_security_event(db, event_type, description, severity="Low", user_id=None, ip_address=None):
-    """Log security events with retry logic"""
+    """
+    Log security events with retry logic
+    """
     max_retries = 3
     
     for attempt in range(max_retries):

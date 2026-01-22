@@ -3,7 +3,7 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_jwt_extended import (
     JWTManager, create_access_token, jwt_required, get_jwt_identity
 )
-from datetime import datetime, time, timedelta, UTC
+from datetime import datetime, time, timedelta
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_cors import CORS
 import jwt as PyJWT  
@@ -12,14 +12,9 @@ sys.path.append(os.path.dirname(__file__))
 
 from middleware.auth import load_current_user
 from database import db
-# ✅ FIXED: Import functions directly instead of module
-from utils.audit_logger import log_audit_action_safe, log_audit_action_enhanced, log_security_event, log_sod_check
+from utils.audit_logger import log_audit_action_safe, log_audit_action_enhanced, log_security_event
 from utils.sod_checker import check_payroll_separation, SeparationOfDutiesViolation
-from models import (
-    User, Employee, Attendance, Payroll, AuditTrail, Anomaly, 
-    ApprovalRequest, SecurityEvent, SeparationOfDutiesLog, 
-    LeaveRequest, Notification, UserSettings
-)
+from models import User, Employee, Attendance, Payroll, AuditTrail, Anomaly, ApprovalRequest, SecurityEvent, SeparationOfDutiesLog, LeaveRequest
 from flask_mail import Mail, Message
 from dotenv import load_dotenv
 from sqlalchemy import extract, and_, func
@@ -102,19 +97,6 @@ app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
 # Initialize extensions
 mail = Mail(app)
-
-# ============================================================================
-# SQLITE DATABASE CONFIGURATION - PREVENT LOCKING
-# ============================================================================
-app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-    'pool_pre_ping': True,
-    'pool_recycle': 300,
-    'connect_args': {
-        'timeout': 30,
-        'check_same_thread': False
-    }
-}
-
 db.init_app(app)
 jwt = JWTManager(app)
 
@@ -203,7 +185,7 @@ def health_check():
         return jsonify({
             "status": "healthy",
             "database": "connected",
-            "timestamp": datetime.now(UTC).replace(tzinfo=None).isoformat()
+            "timestamp": datetime.utcnow().isoformat()
         }), 200
         
     except Exception as e:
@@ -211,7 +193,7 @@ def health_check():
         return jsonify({
             "status": "unhealthy",
             "error": str(e),
-            "timestamp": datetime.now(UTC).replace(tzinfo=None).isoformat()
+            "timestamp": datetime.utcnow().isoformat()
         }), 500
 
 @app.route('/test-email-html')
@@ -300,7 +282,7 @@ def trigger_reminders():
 
 def get_time_ago(dt):
     """Convert datetime to 'time ago' string"""
-    now = datetime.now(UTC).replace(tzinfo=None)
+    now = datetime.utcnow()
     diff = now - dt
     
     if diff.days > 0:
@@ -474,7 +456,7 @@ def login():
         return jsonify({"msg": "Account is inactive. Contact administrator."}), 403
 
     # Update last login
-    user.last_login = datetime.now(UTC).replace(tzinfo=None)
+    user.last_login = datetime.utcnow()
     db.session.commit()
 
     log_audit_action_safe(
@@ -866,123 +848,28 @@ def get_employees():
 @app.route("/employees/<int:id>", methods=["PUT"])
 @jwt_required()
 def update_employee(id):
-    """Update employee - Enhanced version with all fields"""
     current_user = get_jwt_identity()
     user = User.query.filter_by(username=current_user).first()
-    
-    # Authorization check
-    if user.role not in ['Admin', 'HR Officer']:
-        return jsonify({"msg": "Unauthorized"}), 403
-    
     emp = Employee.query.get_or_404(id)
     data = request.json
-    
-    # Track what changed for audit log
-    changes = []
-    
-    # Update basic info
-    if 'name' in data and data['name'] != emp.name:
-        old_name = emp.name
-        emp.name = sanitize_string(data['name'])
-        changes.append(f"name: {old_name} → {emp.name}")
-    
-    if 'national_id' in data and data['national_id'] != emp.national_id:
-        # Check if new national_id already exists
-        existing = Employee.query.filter_by(national_id=data['national_id']).first()
-        if existing and existing.id != id:
-            return jsonify({"msg": "National ID already exists"}), 400
-        changes.append(f"national_id updated")
-        emp.national_id = data['national_id']
-    
-    if 'base_salary' in data and float(data['base_salary']) != emp.base_salary:
-        changes.append(f"salary: {emp.base_salary} → {data['base_salary']}")
-        emp.base_salary = float(data['base_salary'])
-    
-    # Update contact info
-    if 'email' in data and data['email'] != emp.email:
-        if data['email']:
-            is_valid, message = validate_email(data['email'])
-            if not is_valid:
-                return jsonify({"msg": message}), 400
-        changes.append("email updated")
-        emp.email = data['email']
-    
-    if 'phone_number' in data and data['phone_number'] != emp.phone_number:
-        if data['phone_number']:
-            is_valid, message = validate_phone(data['phone_number'])
-            if not is_valid:
-                return jsonify({"msg": message}), 400
-        changes.append("phone updated")
-        emp.phone_number = data['phone_number']
-    
-    if 'address' in data and data['address'] != emp.address:
-        changes.append("address updated")
-        emp.address = data['address']
-    
-    # Update work info
-    if 'department' in data and data['department'] != emp.department:
-        changes.append(f"department: {emp.department} → {data['department']}")
-        emp.department = sanitize_string(data['department'])
-    
-    if 'position' in data and data['position'] != emp.position:
-        changes.append(f"position: {emp.position} → {data['position']}")
-        emp.position = sanitize_string(data['position'])
-    
-    if 'leave_balance' in data:
-        old_balance = emp.leave_balance
-        emp.leave_balance = int(data['leave_balance'])
-        if old_balance != emp.leave_balance:
-            changes.append(f"leave_balance: {old_balance} → {emp.leave_balance}")
-    
-    if 'join_date' in data:
-        try:
-            new_date = datetime.strptime(data['join_date'], '%Y-%m-%d').date()
-            if new_date != emp.join_date:
-                changes.append("join_date updated")
-                emp.join_date = new_date
-        except ValueError:
-            return jsonify({"msg": "Invalid date format. Use YYYY-MM-DD"}), 400
-    
-    if 'active' in data:
-        old_status = emp.active
-        emp.active = bool(data['active'])
-        if old_status != emp.active:
-            status = "activated" if emp.active else "deactivated"
-            changes.append(f"Employee {status}")
-    
-    # Commit changes
-    if changes:
-        emp.updated_at = datetime.now(UTC).replace(tzinfo=None)
-        db.session.commit()
-        
-        log_audit_action_safe(
-            db,
-            action_type="UPDATE_EMPLOYEE",
-            description=f"Updated employee {emp.name}: {', '.join(changes)}",
-            module="EMPLOYEE",
-            user_id=user.id,
-            ip_address=request.remote_addr,
-        )
-        
-        return jsonify({
-            "msg": "Employee updated successfully",
-            "changes": changes,
-            "employee": {
-                "id": emp.id,
-                "name": emp.name,
-                "national_id": emp.national_id,
-                "email": emp.email,
-                "phone_number": emp.phone_number,
-                "address": emp.address,
-                "department": emp.department,
-                "position": emp.position,
-                "base_salary": emp.base_salary,
-                "leave_balance": emp.leave_balance,
-                "active": emp.active
-            }
-        }), 200
-    else:
-        return jsonify({"msg": "No changes detected"}), 200
+
+    old_name = emp.name
+    emp.name = data.get("name", emp.name)
+    emp.national_id = data.get("national_id", emp.national_id)
+    emp.base_salary = data.get("base_salary", emp.base_salary)
+
+    db.session.commit()
+
+    log_audit_action_safe(
+        db,
+        action_type="UPDATE",
+        description=f"Updated employee {old_name} → {emp.name}",
+        module="EMPLOYEE",
+        user_id=user.id,
+        ip_address=request.remote_addr,
+    )
+    return jsonify({"msg": "Employee updated successfully"}), 200
+
 
 @app.route("/employees/<int:id>", methods=["DELETE"])
 @jwt_required()
@@ -1089,7 +976,6 @@ def get_my_info():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
-
 # =====================================================
 # ATTENDANCE
 # =====================================================
@@ -1102,7 +988,7 @@ def record_attendance():
 
     att = Attendance(
         employee_id=data["employee_id"],
-        date=datetime.now(UTC).replace(tzinfo=None),
+        date=datetime.utcnow(),
         status=data["status"],
     )
     db.session.add(att)
@@ -1581,7 +1467,7 @@ def approve_payroll(payroll_id):
     for p in period_payrolls:
         p.status = 'Approved'
         p.approved_by = user.id
-        p.approved_at = datetime.now(UTC).replace(tzinfo=None)
+        p.approved_at = datetime.utcnow()
     
     db.session.commit()
     
@@ -1593,7 +1479,7 @@ def approve_payroll(payroll_id):
     if approval:
         approval.status = 'Approved'
         approval.approved_by = user.id
-        approval.approved_at = datetime.now(UTC).replace(tzinfo=None)
+        approval.approved_at = datetime.utcnow()
         db.session.commit()
     
     # Log audit
@@ -1641,7 +1527,7 @@ def reject_payroll(payroll_id):
     for p in period_payrolls:
         p.status = 'Rejected'
         p.approved_by = user.id
-        p.approved_at = datetime.now(UTC).replace(tzinfo=None)
+        p.approved_at = datetime.utcnow()
     
     db.session.commit()
     
@@ -1653,7 +1539,7 @@ def reject_payroll(payroll_id):
     if approval:
         approval.status = 'Rejected'
         approval.approved_by = user.id
-        approval.approved_at = datetime.now(UTC).replace(tzinfo=None)
+        approval.approved_at = datetime.utcnow()
         approval.rejection_reason = reason
         db.session.commit()
     
@@ -1993,7 +1879,474 @@ def send_bulk_notifications(payroll_batch_id):
         "details": results
     }), 200
 
+@app.route('/test-email')
+def test_email():
+    msg = Message(
+        subject="HRMS Email Test",
+        recipients=["test@gmail.com"],
+        body="HRMS email module is working correctly."
+    )
+    mail.send(msg)
+    return {"message": "Email sent successfully"}, 200
 
+@app.route('/api/notifications', methods=['GET'])
+@jwt_required()
+def get_notifications():
+    """Get all notifications for the current user"""
+    try:
+        current_user = get_jwt_identity()
+        user = User.query.filter_by(username=current_user).first()
+        
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # For now, return sample notifications
+        notifications_list = [
+            {
+                'id': 1,
+                'type': 'approval',
+                'title': 'Payroll Approved',
+                'message': 'Your payroll for December has been approved.',
+                'time': '2h ago',
+                'read': False,
+                'icon': '✅'
+            },
+            {
+                'id': 2,
+                'type': 'info',
+                'title': 'Salary Processed',
+                'message': 'Your salary has been processed successfully.',
+                'time': '1d ago',
+                'read': False,
+                'icon': '💰'
+            },
+            {
+                'id': 3,
+                'type': 'reminder',
+                'title': 'Attendance Reminder',
+                'message': 'Remember to mark your attendance today.',
+                'time': '3d ago',
+                'read': True,
+                'icon': '📅'
+            }
+        ]
+        
+        return jsonify(notifications_list), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/notifications/unread-count', methods=['GET'])
+@jwt_required()
+def get_unread_count():
+    """Get count of unread notifications"""
+    try:
+        count = 2
+        return jsonify({'count': count}), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/notifications/<int:notification_id>/read', methods=['PUT'])
+@jwt_required()
+def mark_notification_read(notification_id):
+    """Mark a notification as read"""
+    try:
+        return jsonify({'message': 'Notification marked as read'}), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/notifications/mark-all-read', methods=['PUT'])
+@jwt_required()
+def mark_all_notifications_read():
+    """Mark all notifications as read"""
+    try:
+        return jsonify({'message': 'All notifications marked as read'}), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/notifications/<int:notification_id>', methods=['DELETE'])
+@jwt_required()
+def delete_notification(notification_id):
+    """Delete a notification"""
+    try:
+        return jsonify({'message': 'Notification deleted'}), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# =====================================================
+# EMPLOYEE PROFILE ENDPOINTS
+# =====================================================
+
+@app.route('/api/employee/profile', methods=['GET'])
+@jwt_required()
+def get_employee_profile():
+    """Get current employee's profile data"""
+    try:
+        current_username = get_jwt_identity()
+        user = User.query.filter_by(username=current_username).first()
+        
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Get the linked employee profile
+        # Handle both list and single object cases
+        employee = None
+        if hasattr(user, 'employee_profile'):
+            if isinstance(user.employee_profile, list):
+                employee = user.employee_profile[0] if user.employee_profile else None
+            else:
+                employee = user.employee_profile
+        
+        # Also try to find by user_id
+        if not employee:
+            employee = Employee.query.filter_by(user_id=user.id).first()
+        
+        if not employee:
+            # If no employee profile linked, return user data only
+            log_audit_action_safe(
+                db,
+                action_type="PROFILE_VIEW_NO_EMPLOYEE",
+                description=f"User {user.username} viewed profile (no employee link)",
+                module="PROFILE",
+                user_id=user.id,
+                ip_address=request.remote_addr
+            )
+            
+            return jsonify({
+                'first_name': user.username.split()[0] if ' ' in user.username else user.username,
+                'last_name': user.username.split()[1] if len(user.username.split()) > 1 else '',
+                'email': user.email or '',
+                'phone': user.phone or '',
+                'department': 'General',
+                'position': user.role.replace('_', ' ').title(),
+                'employee_id': 'N/A',
+                'date_joined': user.created_at.strftime('%B %d, %Y') if user.created_at else '',
+                'address': '',
+                'emergency_contact': '',
+                'emergency_name': ''
+            }), 200
+        
+        # Return complete employee profile
+        log_audit_action_safe(
+            db,
+            action_type="PROFILE_VIEW",
+            description=f"Employee {employee.name} viewed their profile",
+            module="PROFILE",
+            user_id=user.id,
+            ip_address=request.remote_addr
+        )
+        
+        profile_data = {
+            'id': employee.id,
+            'employee_id': employee.national_id,
+            'first_name': employee.name.split()[0] if employee.name else '',
+            'last_name': ' '.join(employee.name.split()[1:]) if len(employee.name.split()) > 1 else '',
+            'email': employee.email or user.email or '',
+            'phone': employee.phone_number or user.phone or '',
+            'department': employee.department or 'General',
+            'position': employee.position or 'Employee',
+            'job_title': employee.position or 'Employee',
+            'date_joined': employee.join_date.strftime('%B %d, %Y') if employee.join_date else '',
+            'hire_date': employee.join_date.strftime('%Y-%m-%d') if employee.join_date else '',
+            'address': getattr(employee, 'address', ''),
+            'emergency_contact': getattr(employee, 'emergency_contact', ''),
+            'emergency_phone': getattr(employee, 'emergency_contact', ''),
+            'emergency_name': getattr(employee, 'emergency_name', ''),
+            'emergency_contact_name': getattr(employee, 'emergency_name', ''),
+            'leave_balance': employee.leave_balance or 0,
+            'base_salary': employee.base_salary,
+            'active': employee.active
+        }
+        
+        return jsonify(profile_data), 200
+        
+    except Exception as e:
+        app.logger.error(f"Error fetching employee profile: {str(e)}")
+        return jsonify({'error': 'Failed to fetch profile data'}), 500
+
+
+@app.route('/api/employee/profile', methods=['PUT'])
+@jwt_required()
+def update_employee_profile():
+    """Update current employee's profile data"""
+    try:
+        current_username = get_jwt_identity()
+        user = User.query.filter_by(username=current_username).first()
+        
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        data = request.get_json()
+        
+        # Validate input data
+        if 'email' in data and data['email']:
+            if not validate_email(data['email']):
+                return jsonify({'error': 'Invalid email format'}), 400
+        
+        if 'phone' in data and data['phone']:
+            if not validate_phone(data['phone']):
+                return jsonify({'error': 'Invalid phone format'}), 400
+        
+        # Get the linked employee profile
+        # Handle both list and single object cases
+        employee = None
+        if hasattr(user, 'employee_profile'):
+            if isinstance(user.employee_profile, list):
+                employee = user.employee_profile[0] if user.employee_profile else None
+            else:
+                employee = user.employee_profile
+        
+        # Also try to find by user_id
+        if not employee:
+            employee = Employee.query.filter_by(user_id=user.id).first()
+        
+        if employee:
+            # Update employee fields
+            if 'first_name' in data or 'last_name' in data:
+                first_name = sanitize_string(data.get('first_name', employee.name.split()[0]))
+                last_name = sanitize_string(data.get('last_name', ''))
+                employee.name = f"{first_name} {last_name}".strip()
+            
+            if 'email' in data:
+                employee.email = sanitize_string(data['email'])
+                user.email = employee.email
+            
+            if 'phone' in data:
+                employee.phone_number = sanitize_string(data['phone'])
+                user.phone = employee.phone_number
+            
+            # Update emergency contact fields if they exist in the model
+            if hasattr(employee, 'address') and 'address' in data:
+                employee.address = sanitize_string(data['address'])
+            
+            if hasattr(employee, 'emergency_contact') and 'emergency_contact' in data:
+                employee.emergency_contact = sanitize_string(data['emergency_contact'])
+            
+            if hasattr(employee, 'emergency_name') and 'emergency_name' in data:
+                employee.emergency_name = sanitize_string(data['emergency_name'])
+        else:
+            # Update user fields only if no employee profile
+            if 'first_name' in data or 'last_name' in data:
+                first_name = sanitize_string(data.get('first_name', user.username.split()[0]))
+                last_name = sanitize_string(data.get('last_name', ''))
+                user.username = f"{first_name} {last_name}".strip()
+            
+            if 'email' in data:
+                user.email = sanitize_string(data['email'])
+            
+            if 'phone' in data:
+                user.phone = sanitize_string(data['phone'])
+        
+        db.session.commit()
+        
+        log_audit_action_safe(
+            db,
+            action_type="PROFILE_UPDATE",
+            description=f"User {user.username} updated their profile",
+            module="PROFILE",
+            user_id=user.id,
+            ip_address=request.remote_addr
+        )
+        
+        return jsonify({
+            'success': True,
+            'message': 'Profile updated successfully'
+        }), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Error updating employee profile: {str(e)}")
+        return jsonify({'error': 'Failed to update profile'}), 500
+
+
+# =====================================================
+# USER PROFILE ENDPOINTS (Original)
+# =====================================================
+
+@app.route('/api/user/profile', methods=['GET'])
+@jwt_required()
+def get_profile():
+    """Get user profile"""
+    try:
+        current_user = get_jwt_identity()
+        user = User.query.filter_by(username=current_user).first()
+        
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        # Get associated employee data if exists
+        employee = Employee.query.filter_by(name=user.username).first()
+        
+        profile = {
+            'firstName': user.username.split()[0] if ' ' in user.username else user.username,
+            'lastName': user.username.split()[1] if ' ' in user.username else '',
+            'email': getattr(user, 'email', 'user@example.com'),
+            'phone': getattr(user, 'phone', '+254 712 345 678'),
+            'department': getattr(user, 'department', 'Engineering'),
+            'position': user.role,
+            'employeeId': getattr(employee, 'national_id', 'EMP-001') if employee else 'EMP-001',
+            'dateJoined': 'January 15, 2024',
+            'address': getattr(user, 'address', 'Nairobi, Kenya'),
+            'emergencyContact': getattr(user, 'emergency_contact', '+254 722 111 222'),
+            'emergencyName': getattr(user, 'emergency_name', 'Jane Doe')
+        }
+        
+        return jsonify(profile), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/user/profile', methods=['PUT'])
+@jwt_required()
+def update_profile():
+    """Update user profile"""
+    try:
+        current_user = get_jwt_identity()
+        user = User.query.filter_by(username=current_user).first()
+        
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        data = request.get_json()
+        
+        log_audit_action_safe(
+            db,
+            action_type="UPDATE_PROFILE",
+            description=f"User {user.username} updated their profile",
+            module="PROFILE",
+            user_id=user.id,
+            ip_address=request.remote_addr
+        )
+        
+        return jsonify({'message': 'Profile updated successfully'}), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# =====================================================
+# SETTINGS ENDPOINTS
+# =====================================================
+
+@app.route('/api/user/settings', methods=['GET'])
+@jwt_required()
+def get_settings():
+    """Get user settings"""
+    try:
+        current_user = get_jwt_identity()
+        user = User.query.filter_by(username=current_user).first()
+        
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        settings = {
+            'emailNotifications': True,
+            'pushNotifications': True,
+            'smsNotifications': False,
+            'leaveRequests': True,
+            'payrollAlerts': True,
+            'attendanceReminders': True,
+            'twoFactorAuth': False,
+            'sessionTimeout': '30',
+            'theme': 'light',
+            'language': 'en',
+            'dateFormat': 'MM/DD/YYYY',
+            'timeFormat': '12h'
+        }
+        
+        return jsonify(settings), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/user/settings', methods=['PUT'])
+@jwt_required()
+def update_settings():
+    """Update user settings"""
+    try:
+        current_user = get_jwt_identity()
+        user = User.query.filter_by(username=current_user).first()
+        
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        data = request.get_json()
+        
+        log_audit_action_safe(
+            db,
+            action_type="UPDATE_SETTINGS",
+            description=f"User {user.username} updated their settings",
+            module="SETTINGS",
+            user_id=user.id,
+            ip_address=request.remote_addr
+        )
+        
+        return jsonify({'message': 'Settings updated successfully'}), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/user/change-password', methods=['POST'])
+@jwt_required()
+def change_password():
+    """Change user password"""
+    try:
+        current_user = get_jwt_identity()
+        user = User.query.filter_by(username=current_user).first()
+        
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        data = request.get_json()
+        
+        current_password = data.get('currentPassword')
+        new_password = data.get('newPassword')
+        
+        if not current_password or not new_password:
+            return jsonify({'error': 'Both current and new password are required'}), 400
+        
+        # Verify current password
+        if not user.check_password(current_password):
+            log_security_event(
+                db,
+                event_type="PASSWORD_CHANGE_FAILED",
+                description=f"Failed password change attempt for {user.username}",
+                severity="Medium",
+                user_id=user.id,
+                ip_address=request.remote_addr
+            )
+            return jsonify({'error': 'Current password is incorrect'}), 401
+        
+        # Update password
+        user.set_password(new_password)
+        db.session.commit()
+        
+        log_audit_action_safe(
+            db,
+            action_type="PASSWORD_CHANGED",
+            description=f"User {user.username} changed their password",
+            module="SECURITY",
+            user_id=user.id,
+            ip_address=request.remote_addr
+        )
+        
+        return jsonify({'message': 'Password changed successfully'}), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': str(e)}), 500
+    
 
 
 @app.route("/leave-requests", methods=["GET"])
@@ -2849,7 +3202,7 @@ def update_user_settings():
     settings.language = data.get('language', settings.language)
     settings.date_format = data.get('dateFormat', settings.date_format)
     settings.time_format = data.get('timeFormat', settings.time_format)
-    settings.updated_at = datetime.now(UTC).replace(tzinfo=None)
+    settings.updated_at = datetime.utcnow()
     
     db.session.commit()
     
@@ -2966,7 +3319,7 @@ def mark_notification_read(notification_id):
         return jsonify({'msg': 'Unauthorized'}), 403
     
     notification.read = True
-    notification.read_at = datetime.now(UTC).replace(tzinfo=None)
+    notification.read_at = datetime.utcnow()
     db.session.commit()
     
     return jsonify({'msg': 'Notification marked as read'}), 200
@@ -2980,7 +3333,7 @@ def mark_all_notifications_read():
     user = User.query.filter_by(username=current_user).first_or_404()
     
     Notification.query.filter_by(user_id=user.id, read=False)\
-        .update({'read': True, 'read_at': datetime.now(UTC).replace(tzinfo=None)})
+        .update({'read': True, 'read_at': datetime.utcnow()})
     db.session.commit()
     
     return jsonify({'msg': 'All notifications marked as read'}), 200
@@ -3028,7 +3381,7 @@ def create_notification(user_id, notif_type, title, message, icon='ℹ️',
 
 def get_time_ago(dt):
     """Convert datetime to 'time ago' format"""
-    now = datetime.now(UTC).replace(tzinfo=None)
+    now = datetime.utcnow()
     diff = now - dt
     
     seconds = diff.total_seconds()
@@ -3164,7 +3517,7 @@ def generate_payslip_pdf(payroll_id):
     add_info = [
         ['Days Worked:', str(payslip.attendance_days)],
         ['Status:', payslip.status],
-        ['Generated:', datetime.now(UTC).replace(tzinfo=None).strftime('%B %d, %Y at %I:%M %p')],
+        ['Generated:', datetime.utcnow().strftime('%B %d, %Y at %I:%M %p')],
     ]
     
     add_table = Table(add_info, colWidths=[2*inch, 4*inch])
@@ -3198,211 +3551,16 @@ def generate_payslip_pdf(payroll_id):
         mimetype='application/pdf'
     )
 
-# =====================================================
-# EMPLOYEE PROFILE ENDPOINT - MISSING
-# =====================================================
-# =====================================================
-# EMPLOYEE PROFILE ENDPOINTS - ADD BOTH!
-# =====================================================
 
-@app.route("/api/employee/profile", methods=["GET", "OPTIONS"])
-@jwt_required(optional=True)
-def get_employee_profile():
-    """Get complete employee profile for logged-in user"""
-    if request.method == "OPTIONS":
-        return "", 204
-    
-    try:
-        current_user = get_jwt_identity()
-        user = User.query.filter_by(username=current_user).first()
-        
-        if not user:
-            return jsonify({'error': 'User not found'}), 404
-        
-        # Get employee record
-        employee = Employee.query.filter_by(user_id=user.id).first()
-        
-        if not employee:
-            if hasattr(user, 'employee_profile'):
-                if isinstance(user.employee_profile, list):
-                    employee = user.employee_profile[0] if user.employee_profile else None
-                else:
-                    employee = user.employee_profile
-        
-        if not employee:
-            return jsonify({
-                'id': user.id,
-                'username': user.username,
-                'firstName': '',
-                'lastName': '',
-                'email': user.email or '',
-                'phone': user.phone or '',
-                'address': '',
-                'role': user.role,
-                'name': user.username,
-                'employeeId': None,
-                'nationalId': None,
-                'department': '',
-                'position': user.role,
-                'systemRole': user.role,
-                'joinDate': None,
-                'tenure': 'N/A',
-                'baseSalary': 0,
-                'leaveBalance': 0,
-                'isActive': user.is_active,
-                'profileCompletion': 30
-            }), 200
-        
-        # Split name into first and last
-        name_parts = employee.name.split(' ', 1)
-        first_name = name_parts[0] if len(name_parts) > 0 else employee.name
-        last_name = name_parts[1] if len(name_parts) > 1 else ''
-        
-        # Calculate tenure
-        tenure = 'N/A'
-        if employee.join_date:
-            years = (datetime.now().date() - employee.join_date).days // 365
-            months = ((datetime.now().date() - employee.join_date).days % 365) // 30
-            if years > 0:
-                tenure = f"{years} year{'s' if years > 1 else ''}"
-                if months > 0:
-                    tenure += f" {months} month{'s' if months > 1 else ''}"
-            elif months > 0:
-                tenure = f"{months} month{'s' if months > 1 else ''}"
-            else:
-                days = (datetime.now().date() - employee.join_date).days
-                tenure = f"{days} day{'s' if days > 1 else ''}"
-        
-        # Calculate profile completion
-        fields_filled = 0
-        total_fields = 12
-        
-        if first_name: fields_filled += 1
-        if last_name: fields_filled += 1
-        if employee.email or user.email: fields_filled += 1
-        if employee.phone_number or user.phone: fields_filled += 1
-        if employee.address: fields_filled += 1
-        if employee.national_id: fields_filled += 1
-        if employee.department: fields_filled += 1
-        if employee.position: fields_filled += 1
-        if employee.join_date: fields_filled += 1
-        if employee.base_salary: fields_filled += 1
-        if employee.leave_balance: fields_filled += 1
-        if user.role: fields_filled += 1
-        
-        profile_completion = round((fields_filled / total_fields) * 100)
-        
-        return jsonify({
-            'id': user.id,
-            'username': user.username,
-            'role': user.role,
-            'isActive': employee.active,
-            'firstName': first_name,
-            'lastName': last_name,
-            'name': employee.name,
-            'email': employee.email or user.email or '',
-            'phone': employee.phone_number or user.phone or '',
-            'address': employee.address or '',
-            'employeeId': employee.id,
-            'nationalId': employee.national_id,
-            'department': employee.department or '',
-            'position': employee.position or '',
-            'systemRole': user.role,
-            'joinDate': employee.join_date.strftime('%Y-%m-%d') if employee.join_date else None,
-            'tenure': tenure,
-            'baseSalary': float(employee.base_salary) if employee.base_salary else 0,
-            'leaveBalance': employee.leave_balance if employee.leave_balance else 21,
-            'profileCompletion': profile_completion
-        }), 200
-        
-    except Exception as e:
-        print(f"Error in get_employee_profile: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+# ==============================================================================
+# NOTIFICATION TRIGGERS - Add to existing endpoints
+# ==============================================================================
 
 
-@app.route("/api/employee/profile", methods=["PUT"])
-@jwt_required()
-def update_employee_profile():
-    """Update employee profile"""
-    try:
-        current_user = get_jwt_identity()
-        user = User.query.filter_by(username=current_user).first()
-        
-        if not user:
-            return jsonify({'error': 'User not found'}), 404
-        
-        employee = Employee.query.filter_by(user_id=user.id).first()
-        
-        if not employee:
-            return jsonify({'error': 'Employee profile not found'}), 404
-        
-        data = request.get_json()
-        
-        # Update name (combine first and last)
-        if 'firstName' in data or 'lastName' in data:
-            first_name = data.get('firstName', '').strip()
-            last_name = data.get('lastName', '').strip()
-            if first_name or last_name:
-                employee.name = f"{first_name} {last_name}".strip()
-        
-        # Update personal info
-        if 'email' in data:
-            employee.email = data['email']
-            user.email = data['email']
-        
-        if 'phone' in data:
-            employee.phone_number = data['phone']
-            user.phone = data['phone']
-        
-        if 'address' in data:
-            employee.address = data['address']
-        
-        # Update work info (only if admin/HR)
-        if user.role in ['Admin', 'HR Officer']:
-            if 'department' in data:
-                employee.department = data['department']
-            
-            if 'position' in data:
-                employee.position = data['position']
-            
-            if 'baseSalary' in data:
-                employee.base_salary = float(data['baseSalary'])
-            
-            if 'leaveBalance' in data:
-                employee.leave_balance = int(data['leaveBalance'])
-        
-        db.session.commit()
-        
-        # Log the update
-        log_audit_action_safe(
-            db,
-            action_type="UPDATE_PROFILE",
-            description=f"User {user.username} updated their profile",
-            module="PROFILE",
-            user_id=user.id,
-            ip_address=request.remote_addr
-        )
-        
-        return jsonify({
-            'msg': 'Profile updated successfully',
-            'profile': {
-                'name': employee.name,
-                'email': employee.email,
-                'phone': employee.phone_number,
-                'address': employee.address
-            }
-        }), 200
-        
-    except Exception as e:
-        db.session.rollback()
-        print(f"Error updating profile: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
 
-
+# ==============================================================================
+# DATABASE MIGRATION for UserSettings
+# ==============================================================================
 
 # =====================================================
 # MAIN
