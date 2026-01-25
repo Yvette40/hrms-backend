@@ -43,7 +43,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT
 from io import BytesIO
 import json
-
+from math import radians, sin, cos, sqrt, atan2
 
 # Import validators
 from validators import (
@@ -2501,14 +2501,63 @@ def create_employee_leave_request():
 
 
 
-# BIOMETRIC CHECK-IN/CHECK-OUT ENDPOINTS
+# BIOMETRIC CHECK-IN/CHECK-OUT ENDPOINTS WITH GEOLOCATION SECURITY
 # ============================================================================
+
+from math import radians, sin, cos, sqrt, atan2
+
+# Office Location Configuration (UPDATE THESE TO YOUR ACTUAL OFFICE COORDINATES)
+OFFICE_LOCATION = {
+    'latitude': -1.2921,   # Example: Nairobi coordinates
+    'longitude': 36.8219,
+    'name': 'Company Headquarters'
+}
+
+# Maximum allowed distance from office (in kilometers)
+MAX_DISTANCE_KM = 0.5  # 500 meters radius
+
+def calculate_distance(lat1, lon1, lat2, lon2):
+    """
+    Calculate distance between two GPS coordinates using Haversine formula
+    Returns distance in kilometers
+    """
+    R = 6371  # Earth's radius in kilometers
+    
+    lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    
+    a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+    c = 2 * atan2(sqrt(a), sqrt(1-a))
+    distance = R * c
+    
+    return distance
+
+def verify_location(user_lat, user_lon):
+    """
+    Verify if user is within allowed distance from office
+    Returns (is_valid, distance, message)
+    """
+    if user_lat is None or user_lon is None:
+        return False, None, "Location data is required"
+    
+    distance = calculate_distance(
+        user_lat, user_lon,
+        OFFICE_LOCATION['latitude'],
+        OFFICE_LOCATION['longitude']
+    )
+    
+    if distance > MAX_DISTANCE_KM:
+        return False, distance, f"You are {distance:.2f}km from office. You must be within {MAX_DISTANCE_KM}km to check in/out."
+    
+    return True, distance, f"Location verified ({distance*1000:.0f}m from office)"
+
 
 @app.route('/biometric/check-in', methods=['POST'])
 @jwt_required()
 def biometric_check_in():
     """
-    Employee checks in using biometric system
+    Employee checks in using biometric system with geolocation verification
     Simulates fingerprint/face recognition
     """
     try:
@@ -2518,10 +2567,29 @@ def biometric_check_in():
         if not user:
             return jsonify({'error': 'User not found'}), 404
         
+        # Only employees can use biometric check-in
+        if user.role != 'Employee':
+            return jsonify({'error': 'Biometric system is only for employees'}), 403
+        
         # Get employee
         employee = Employee.query.filter_by(user_id=user.id).first()
         if not employee:
             return jsonify({'error': 'Employee profile not found'}), 404
+        
+        # Get location data from request
+        data = request.json or {}
+        user_latitude = data.get('latitude')
+        user_longitude = data.get('longitude')
+        
+        # Verify location
+        is_valid, distance, location_msg = verify_location(user_latitude, user_longitude)
+        
+        if not is_valid:
+            return jsonify({
+                'error': '🚫 Location verification failed',
+                'message': location_msg,
+                'distance': distance
+            }), 403
         
         # Check if already checked in today
         today = datetime.now().date()
@@ -2548,7 +2616,7 @@ def biometric_check_in():
             # Update existing record
             existing.check_in_time = check_in_time.strftime('%H:%M')
             existing.status = status
-            existing.notes = f'Biometric check-in at {check_in_time.strftime("%H:%M")}'
+            existing.notes = f'Biometric check-in at {check_in_time.strftime("%H:%M")} - {location_msg}'
         else:
             # Create new attendance record
             new_attendance = Attendance(
@@ -2556,7 +2624,7 @@ def biometric_check_in():
                 date=today,
                 status=status,
                 check_in_time=check_in_time.strftime('%H:%M'),
-                notes=f'Biometric check-in at {check_in_time.strftime("%H:%M")}',
+                notes=f'Biometric check-in at {check_in_time.strftime("%H:%M")} - {location_msg}',
                 recorded_by=user.id
             )
             db.session.add(new_attendance)
@@ -2569,6 +2637,8 @@ def biometric_check_in():
             'employee_name': employee.name,
             'check_in_time': check_in_time.strftime('%H:%M'),
             'status': status,
+            'location_verified': True,
+            'distance': f"{distance*1000:.0f}m",
             'greeting': f"Good morning, {employee.name.split()[0]}!" if check_in_time.hour < 12 else f"Good afternoon, {employee.name.split()[0]}!"
         }), 200
         
@@ -2581,7 +2651,7 @@ def biometric_check_in():
 @jwt_required()
 def biometric_check_out():
     """
-    Employee checks out using biometric system
+    Employee checks out using biometric system with geolocation verification
     Calculates hours worked
     """
     try:
@@ -2591,10 +2661,29 @@ def biometric_check_out():
         if not user:
             return jsonify({'error': 'User not found'}), 404
         
+        # Only employees can use biometric check-out
+        if user.role != 'Employee':
+            return jsonify({'error': 'Biometric system is only for employees'}), 403
+        
         # Get employee
         employee = Employee.query.filter_by(user_id=user.id).first()
         if not employee:
             return jsonify({'error': 'Employee profile not found'}), 404
+        
+        # Get location data from request
+        data = request.json or {}
+        user_latitude = data.get('latitude')
+        user_longitude = data.get('longitude')
+        
+        # Verify location
+        is_valid, distance, location_msg = verify_location(user_latitude, user_longitude)
+        
+        if not is_valid:
+            return jsonify({
+                'error': '🚫 Location verification failed',
+                'message': location_msg,
+                'distance': distance
+            }), 403
         
         # Get today's attendance
         today = datetime.now().date()
@@ -2635,7 +2724,7 @@ def biometric_check_out():
             hours_worked -= 1
         
         attendance.hours_worked = round(hours_worked, 2)
-        attendance.notes = f'Biometric check-out at {check_out_time.strftime("%H:%M")} - {attendance.hours_worked} hours worked'
+        attendance.notes = f'Biometric check-out at {check_out_time.strftime("%H:%M")} - {location_msg} - {attendance.hours_worked} hours worked'
         
         db.session.commit()
         
@@ -2646,6 +2735,8 @@ def biometric_check_out():
             'check_in_time': attendance.check_in_time,
             'check_out_time': attendance.check_out_time,
             'hours_worked': attendance.hours_worked,
+            'location_verified': True,
+            'distance': f"{distance*1000:.0f}m",
             'farewell': f"Goodbye, {employee.name.split()[0]}! See you tomorrow."
         }), 200
         
@@ -2695,6 +2786,78 @@ def biometric_status():
             'hours_worked': attendance.hours_worked,
             'status': attendance.status,
             'notes': attendance.notes
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+# ============================================================================
+# ADMIN: Real-time Attendance Monitor (For HR/Admin Dashboard)
+# ============================================================================
+
+@app.route('/attendance/today', methods=['GET'])
+@jwt_required()
+def get_today_attendance():
+    """
+    Get all attendance records for today (for HR/Admin dashboard)
+    Shows real-time check-in/out status
+    """
+    try:
+        current_username = get_jwt_identity()
+        user = User.query.filter_by(username=current_username).first()
+        
+        # Only HR and Admin can view all attendance
+        if user.role not in ['Admin', 'HR Officer']:
+            return jsonify({'error': 'Unauthorized. Only HR and Admin can view all attendance.'}), 403
+        
+        today = datetime.now().date()
+        
+        # Get all employees
+        all_employees = Employee.query.all()
+        
+        result = []
+        for employee in all_employees:
+            # Get attendance for this employee today
+            attendance = Attendance.query.filter_by(
+                employee_id=employee.id,
+                date=today
+            ).first()
+            
+            # Get department name
+            department = Department.query.get(employee.department_id)
+            
+            if attendance:
+                result.append({
+                    'id': attendance.id,
+                    'employee_id': employee.id,
+                    'employee_name': employee.name,
+                    'department': department.name if department else 'N/A',
+                    'check_in_time': attendance.check_in_time,
+                    'check_out_time': attendance.check_out_time,
+                    'status': attendance.status,
+                    'hours_worked': attendance.hours_worked,
+                    'notes': attendance.notes
+                })
+            else:
+                # Employee hasn't checked in yet
+                result.append({
+                    'id': None,
+                    'employee_id': employee.id,
+                    'employee_name': employee.name,
+                    'department': department.name if department else 'N/A',
+                    'check_in_time': None,
+                    'check_out_time': None,
+                    'status': 'Absent',
+                    'hours_worked': None,
+                    'notes': 'Not checked in yet'
+                })
+        
+        return jsonify({
+            'date': today.strftime('%Y-%m-%d'),
+            'total_employees': len(all_employees),
+            'checked_in': sum(1 for r in result if r['check_in_time']),
+            'records': result
         }), 200
         
     except Exception as e:
@@ -2795,10 +2958,6 @@ def manual_biometric_entry():
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
-
-
-
-
 
 # ==============================================================================
 # SETTINGS ENDPOINTS
