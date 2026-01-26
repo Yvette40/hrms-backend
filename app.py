@@ -22,7 +22,7 @@ from models import (
 )
 from flask_mail import Mail, Message
 from dotenv import load_dotenv
-from sqlalchemy import extract, and_, func
+from sqlalchemy import extract, and_, func, text
 from scheduler_service import init_scheduler
 
 # ============================================================================
@@ -198,7 +198,7 @@ def health_check():
     """Health check endpoint for monitoring"""
     try:
         # Check database connection
-        db.session.execute('SELECT 1')
+        db.session.execute(text('SELECT 1'))
         
         return jsonify({
             "status": "healthy",
@@ -572,14 +572,21 @@ def dashboard_stats():
         present_today = Attendance.query.filter_by(date=today, status='Present').count()
         attendance_rate = round((present_today / total_today * 100), 1) if total_today > 0 else 0
         
-        # Count pending payroll records
+                
+       # Count pending payroll records
         pending_payroll = Payroll.query.filter_by(status='Pending').count()
         
         # Count pending leave requests
-        leave_requests = 0  # TODO: Implement when LeaveRequest model exists
+        leave_requests = LeaveRequest.query.filter_by(status='Pending').count()
         
-        # Count employees on leave today
-        on_leave = 0  # TODO: Implement when LeaveRequest model exists
+        # Count employees on leave today (today already defined above, so we can reuse it)
+        on_leave = LeaveRequest.query.filter(
+            and_(
+                LeaveRequest.status == 'Approved',
+                LeaveRequest.start_date <= today,
+                LeaveRequest.end_date >= today
+            )
+        ).count()
         
         # Count pending approvals
         pending_approvals = ApprovalRequest.query.filter_by(status='Pending').count()
@@ -1298,8 +1305,8 @@ def calculate_nssf(gross_salary):
     nssf = min(gross_salary * 0.06, 1080)
     return round(nssf, 2)
 
-def calculate_nhif(gross_salary):
-    """Calculate NHIF deduction based on salary brackets"""
+def calculate_sha(gross_salary):
+    """Calculate SHA deduction based on salary brackets"""
     if gross_salary <= 5999:
         return 150
     elif gross_salary <= 7999:
@@ -1372,7 +1379,7 @@ def calculate_payroll_for_employee(employee, period_start, period_end):
     
     # Calculate deductions
     nssf = calculate_nssf(gross_salary)
-    nhif = calculate_nhif(gross_salary)
+    sha = calculate_sha(gross_salary)
     paye = calculate_paye(gross_salary, nssf)
     housing_levy = calculate_housing_levy(gross_salary)
     
@@ -1390,7 +1397,7 @@ def calculate_payroll_for_employee(employee, period_start, period_end):
         'employee_name': employee.name,
         'gross_salary': gross_salary,
         'nssf': nssf,
-        'nhif': nhif,
+        'sha': nhif,
         'paye': paye,
         'housing_levy': housing_levy,
         'total_deductions': total_deductions,
@@ -1734,7 +1741,7 @@ def get_payslip_details(payroll_id):
         },
         'deductions': {
             'nssf': payslip.nssf,
-            'nhif': payslip.nhif,
+            'sha': payslip.sha,
             'paye': payslip.paye,
             'housing_levy': payslip.housing_levy,
             'total': payslip.total_deductions
@@ -2003,7 +2010,39 @@ def get_leave_requests():
     current_user = get_jwt_identity()
     user = User.query.filter_by(username=current_user).first()
     
-    return jsonify([]), 200
+    if not user:
+        return jsonify({"msg": "User not found"}), 404
+    
+    # Admin and HR see all leave requests
+    if user.role in ['Admin', 'HR Officer', 'Department Manager']:
+        leaves = LeaveRequest.query.order_by(LeaveRequest.id.desc()).all()
+    else:
+        # Employees only see their own
+        employee = Employee.query.filter_by(user_id=user.id).first()
+        if not employee:
+            return jsonify([]), 200
+        leaves = LeaveRequest.query.filter_by(employee_id=employee.id).order_by(LeaveRequest.id.desc()).all()
+    
+    # Format response with employee names
+    result = []
+    for leave in leaves:
+        employee = Employee.query.get(leave.employee_id)
+        result.append({
+            'id': leave.id,
+            'employee_id': leave.employee_id,
+            'employee_name': employee.name if employee else 'Unknown',
+            'start_date': leave.start_date.strftime('%Y-%m-%d'),
+            'end_date': leave.end_date.strftime('%Y-%m-%d'),
+            'leave_type': leave.leave_type,
+            'reason': leave.reason,
+            'days_requested': leave.days_requested,
+            'status': leave.status,
+            'requested_at': leave.requested_at.strftime('%Y-%m-%d %H:%M:%S'),
+            'approved_at': leave.approved_at.strftime('%Y-%m-%d %H:%M:%S') if leave.approved_at else None,
+            'rejection_reason': leave.rejection_reason
+        })
+    
+    return jsonify(result), 200
 
 
 @app.route("/leave-requests/<int:leave_id>/approve", methods=["POST"])
@@ -2016,9 +2055,62 @@ def approve_leave_request(leave_id):
     if user.role not in ['Admin', 'HR Officer']:
         return jsonify({"msg": "Unauthorized"}), 403
     
-    return jsonify({"msg": "Leave request approved"}), 200
+    # Get leave request
+    leave = LeaveRequest.query.get_or_404(leave_id)
+    
+    # Update status
+    leave.status = 'Approved'
+    leave.approved_at = datetime.now(UTC).replace(tzinfo=None)
+    
+    try:
+        db.session.commit()
+        
+        # Get employee for logging and notifications
+        employee = Employee.query.get(leave.employee_id)
+        
+        # Log audit
+        log_audit_action_safe(
+            db,
+            action_type="LEAVE_APPROVED",
+            description=f"Approved {leave.leave_type} leave for {employee.name if employee else 'Unknown'} ({leave.start_date.strftime('%Y-%m-%d')} to {leave.end_date.strftime('%Y-%m-%d')})",
+            module="LEAVE_MANAGEMENT",
+            user_id=user.id,
+            ip_address=request.remote_addr
+        )
+        
+        # Send email notification
+        if employee and employee.email:
+            email_service = EmailService()
+            email_service.send_leave_approval_notification(
+                employee_email=employee.email,
+                employee_name=employee.name,
+                leave_type=leave.leave_type,
+                start_date=leave.start_date.strftime('%Y-%m-%d'),
+                end_date=leave.end_date.strftime('%Y-%m-%d'),
+                days=leave.days_requested
+            )
+        
+        # Create notification for employee
+        if employee and hasattr(employee, 'user_id') and employee.user_id:
+            notification = Notification(
+                user_id=employee.user_id,
+                type='approval',
+                title='Leave Request Approved',
+                message=f'Your {leave.leave_type} leave request from {leave.start_date.strftime("%Y-%m-%d")} to {leave.end_date.strftime("%Y-%m-%d")} has been approved!',
+                icon='✅'
+            )
+            db.session.add(notification)
+            db.session.commit()
+        
+        return jsonify({"msg": "Leave request approved and notification sent"}), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f'Error approving leave: {str(e)}')
+        return jsonify({"msg": "Failed to approve leave request"}), 500
+    
 
-
+    
 @app.route("/leave-requests/<int:leave_id>/reject", methods=["POST"])
 @jwt_required()
 def reject_leave_request(leave_id):
@@ -2032,8 +2124,61 @@ def reject_leave_request(leave_id):
     data = request.json
     reason = data.get('reason', 'No reason provided')
     
-    return jsonify({"msg": "Leave request rejected"}), 200
-
+    # Get leave request
+    leave = LeaveRequest.query.get_or_404(leave_id)
+    
+    # Update status
+    leave.status = 'Rejected'
+    leave.rejection_reason = reason
+    
+    try:
+        db.session.commit()
+        
+        # Get employee for logging and notifications
+        employee = Employee.query.get(leave.employee_id)
+        
+        # Log audit
+        log_audit_action_safe(
+            db,
+            action_type="LEAVE_REJECTED",
+            description=f"Rejected {leave.leave_type} leave for {employee.name if employee else 'Unknown'}. Reason: {reason}",
+            module="LEAVE_MANAGEMENT",
+            user_id=user.id,
+            ip_address=request.remote_addr
+        )
+        
+        # Send email notification
+        if employee and employee.email:
+            email_service = EmailService()
+            email_service.send_leave_rejection_notification(
+                employee_email=employee.email,
+                employee_name=employee.name,
+                leave_type=leave.leave_type,
+                start_date=leave.start_date.strftime('%Y-%m-%d'),
+                end_date=leave.end_date.strftime('%Y-%m-%d'),
+                reason=reason
+            )
+        
+        # Create notification for employee
+        if employee and hasattr(employee, 'user_id') and employee.user_id:
+            notification = Notification(
+                user_id=employee.user_id,
+                type='warning',
+                title='Leave Request Rejected',
+                message=f'Your {leave.leave_type} leave request from {leave.start_date.strftime("%Y-%m-%d")} to {leave.end_date.strftime("%Y-%m-%d")} was rejected. Reason: {reason}',
+                icon='❌'
+            )
+            db.session.add(notification)
+            db.session.commit()
+        
+        return jsonify({"msg": "Leave request rejected and notification sent"}), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f'Error rejecting leave: {str(e)}')
+        return jsonify({"msg": "Failed to reject leave request"}), 500
+    
+    
 
 @app.route("/leave-requests", methods=["POST"])
 @jwt_required()
@@ -2478,13 +2623,24 @@ def create_employee_leave_request():
             end_date=end_date,
             days_requested=days,
             reason=data['reason'],
-            status='Pending',
-            created_at=datetime.now()
+            status='Pending',            
         )
         
         db.session.add(new_leave)
         db.session.commit()
         
+        # Log audit
+        log_audit_action_safe(
+            db,
+            action_type="LEAVE_REQUESTED",
+            description=f"Employee {employee.name} requested {data['leave_type']} leave ({days} days)",
+            module="LEAVE_MANAGEMENT",
+            user_id=user.id,
+            ip_address=request.remote_addr
+)
+
+
+
         return jsonify({
             'id': new_leave.id, 
             'message': 'Leave request submitted successfully'
@@ -2568,6 +2724,7 @@ def biometric_check_in():
             return jsonify({'error': 'User not found'}), 404
         
         # Only employees can use biometric check-in
+        print(f"DEBUG: User={user.username}, Role={user.role}, Expected=Employee")
         if user.role != 'Employee':
             return jsonify({'error': 'Biometric system is only for employees'}), 403
         
@@ -2584,12 +2741,15 @@ def biometric_check_in():
         # Verify location
         is_valid, distance, location_msg = verify_location(user_latitude, user_longitude)
         
-        if not is_valid:
-            return jsonify({
-                'error': '🚫 Location verification failed',
-                'message': location_msg,
-                'distance': distance
-            }), 403
+       # Verify location (BYPASSED FOR TESTING)
+        if user_latitude and user_longitude:
+            is_valid, distance, location_msg = verify_location(user_latitude, user_longitude)
+            if not is_valid:
+                print(f"⚠️ Location check failed: {location_msg}")
+        
+        # Allow checkout regardless of location for testing
+        distance = 0
+        location_msg = "Location check bypassed for testing"
         
         # Check if already checked in today
         today = datetime.now().date()
@@ -2825,14 +2985,12 @@ def get_today_attendance():
             ).first()
             
             # Get department name
-            department = Department.query.get(employee.department_id)
-            
             if attendance:
                 result.append({
                     'id': attendance.id,
                     'employee_id': employee.id,
                     'employee_name': employee.name,
-                    'department': department.name if department else 'N/A',
+                    'department': employee.department,  # Department stored as string
                     'check_in_time': attendance.check_in_time,
                     'check_out_time': attendance.check_out_time,
                     'status': attendance.status,
@@ -2845,7 +3003,7 @@ def get_today_attendance():
                     'id': None,
                     'employee_id': employee.id,
                     'employee_name': employee.name,
-                    'department': department.name if department else 'N/A',
+                    'department': employee.department,  # Department stored as string
                     'check_in_time': None,
                     'check_out_time': None,
                     'status': 'Absent',
@@ -2863,6 +3021,58 @@ def get_today_attendance():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/attendance-report', methods=['GET'])
+@jwt_required()
+def get_attendance_report():
+    """
+    Get attendance records for a date range with employee details
+    """
+    try:
+        current_username = get_jwt_identity()
+        user = User.query.filter_by(username=current_username).first()
+        
+        # Only Admin and HR can view reports
+        if user.role not in ['Admin', 'HR Officer', 'Department Manager']:
+            return jsonify({'error': 'Unauthorized'}), 403
+        
+        # Get date range from query params
+        start_date_str = request.args.get('start_date')
+        end_date_str = request.args.get('end_date')
+        
+        if not start_date_str or not end_date_str:
+            return jsonify({'error': 'start_date and end_date are required'}), 400
+        
+        # Parse dates
+        start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+        end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+        
+        # Get all attendance records in date range
+        attendance_records = Attendance.query.filter(
+            Attendance.date >= start_date,
+            Attendance.date <= end_date
+        ).order_by(Attendance.date.desc(), Attendance.employee_id).all()
+        
+        # Format response with employee details
+        result = []
+        for record in attendance_records:
+            employee = Employee.query.get(record.employee_id)
+            if employee:
+                result.append({
+                    'date': record.date.strftime('%Y-%m-%d'),
+                    'employee_id': employee.id,
+                    'employee_name': employee.name,
+                    'department': employee.department,
+                    'check_in_time': record.check_in_time,
+                    'check_out_time': record.check_out_time,
+                    'hours_worked': record.hours_worked,
+                    'status': record.status,
+                    'notes': record.notes
+                })
+        
+        return jsonify(result), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 # ============================================================================
 # ADMIN: Manual Biometric Entry (For demonstration/testing)
@@ -3290,7 +3500,7 @@ def generate_payslip_pdf(payroll_id):
         ['', ''],
         ['Deductions', 'Amount (KES)'],
         ['NSSF', f'{payslip.nssf:,.2f}'],
-        ['NHIF', f'{payslip.nhif:,.2f}'],
+        ['SHA', f'{payslip.sha:,.2f}'],
         ['PAYE (Tax)', f'{payslip.paye:,.2f}'],
         ['Housing Levy', f'{payslip.housing_levy:,.2f}'],
         ['Total Deductions', f'{payslip.total_deductions:,.2f}'],

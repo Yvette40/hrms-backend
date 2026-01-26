@@ -4,51 +4,37 @@ from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from datetime import datetime, UTC
 import time
 
-def log_audit_action_safe(db, action_type, description, module, user_id=None, ip_address=None, action_type_category="Normal"):
-    """
-    Safe audit logging with automatic rollback on failure
-    """
+def log_audit_action_safe(db, action_type, description, module, user_id=None, ip_address=None):
+    """Safe audit logging with automatic rollback on failure"""
     max_retries = 3
-    
     for attempt in range(max_retries):
         try:
             from models import AuditTrail
-            
-            # Use a separate session for audit logging
             audit_entry = AuditTrail(
                 user_id=user_id,
-                action=action_type,
+                action=description,  # Human-readable description
                 module=module,
-                action_type=action_type_category,
+                action_type=action_type,  # ✅ FIXED: Use action_type directly, not "Normal"
                 details=description,
                 ip_address=ip_address,
                 timestamp=datetime.now(UTC).replace(tzinfo=None)
             )
-            
             db.session.add(audit_entry)
-            db.session.flush()  # Flush instead of commit
+            db.session.flush()
             db.session.commit()
             return True
-            
         except OperationalError as e:
             if "database is locked" in str(e):
-                db.session.rollback()  # CRITICAL: Rollback the session
                 if attempt < max_retries - 1:
-                    time.sleep(0.1 * (attempt + 1))  # Short delay
+                    time.sleep(0.1 * (attempt + 1))
+                    db.session.rollback()
                     continue
-                else:
-                    print(f"⚠️ Audit log failed after {max_retries} attempts (DB locked)")
-                    return False
-            else:
-                db.session.rollback()
-                print(f"⚠️ Audit log DB error: {e}")
-                return False
-                
-        except Exception as e:
-            db.session.rollback()  # CRITICAL: Always rollback on error
-            print(f"⚠️ Audit log error: {e}")
+            db.session.rollback()
             return False
-    
+        except Exception as e:
+            db.session.rollback()
+            print(f"Audit log error: {e}")
+            return False
     return False
 
 
