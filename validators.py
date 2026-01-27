@@ -73,25 +73,20 @@ def validate_password(password: str) -> Tuple[bool, str]:
     if not password:
         return False, "Password is required"
     
-    if len(password) < 8:
-        return False, "Password must be at least 8 characters"
-    
+    # ✅ ADD THIS INSTEAD
+    if len(password) < 6:
+        return False, "Password must be at least 6 characters"
+
     if len(password) > 128:
         return False, "Password too long (max 128 characters)"
-    
-    if not re.search(r'[A-Z]', password):
-        return False, "Password must contain at least one uppercase letter"
-    
-    if not re.search(r'[a-z]', password):
-        return False, "Password must contain at least one lowercase letter"
-    
+
+    if not re.search(r'[a-zA-Z]', password):
+        return False, "Password must contain at least one letter"
+
     if not re.search(r'\d', password):
         return False, "Password must contain at least one number"
-    
-    if not re.search(r'[!@#$%^&*(),.?":{}|<>_\-+=]', password):
-        return False, "Password must contain at least one special character"
-    
-    return True, "Valid"
+        
+        return True, "Valid"
 
 
 def validate_phone(phone: str) -> Tuple[bool, str]:

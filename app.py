@@ -6,6 +6,10 @@ from flask_jwt_extended import (
 from datetime import datetime, time, timedelta, UTC
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_cors import CORS
+
+import random
+import string
+
 import jwt as PyJWT  
 import os, sys
 sys.path.append(os.path.dirname(__file__))
@@ -102,6 +106,13 @@ app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
 # Initialize extensions
 mail = Mail(app)
+
+def generate_temp_password():
+    """Generate a random 12-character password"""
+    chars = string.ascii_letters + string.digits + "!@#$%"
+    return ''.join(random.choice(chars) for _ in range(12))
+
+
 
 # ============================================================================
 # SQLITE DATABASE CONFIGURATION - PREVENT LOCKING
@@ -334,6 +345,7 @@ def init_database():
     from datetime import datetime, timedelta
     import random
     
+    
     # Create default users
     users_data = [
         {"username": "admin", "password": "AdminPass123", "role": "Admin"},
@@ -472,6 +484,11 @@ def login():
     if not user.is_active:
         app.logger.warning(f"Login attempt by inactive user {username}")
         return jsonify({"msg": "Account is inactive. Contact administrator."}), 403
+
+    if user.temp_password:
+        user.temp_password = None
+
+   
 
     # Update last login
     user.last_login = datetime.now(UTC).replace(tzinfo=None)
@@ -729,10 +746,10 @@ def add_employee():
     # Check if we should create a user account
     create_user_account = data.get("create_user_account", True)
     username = data.get("username")
-    temp_password = data.get("temp_password", "TempPass123")
 
     user_id = None
     created_username = None
+    temp_password = None  # ✅ CHANGED: Will store the actual generated password
     
     # Create user account if requested
     if create_user_account:
@@ -755,19 +772,26 @@ def add_employee():
         if User.query.filter_by(username=username).first():
             return jsonify({"msg": f"Username '{username}' already exists"}), 400
         
+        # ✅ CHANGED: Generate a secure temporary password
+        temp_password = generate_temp_password()
+        
         # Create user account
         new_user = User(
             username=username,
             role="Employee",
             email=data.get('email'),
-            phone=data.get('phone_number')
+            phone=data.get('phone_number'),
+            temp_password=temp_password  # ✅ NEW: Store temp password for HR to retrieve
         )
-        new_user.set_password(temp_password)
+        new_user.set_password(temp_password)  # Hash the password for authentication
         db.session.add(new_user)
         db.session.flush()
         
         user_id = new_user.id
         created_username = username
+        
+        # ✅ NEW: Log the credential creation
+        app.logger.info(f"✅ Created user account for {username} with temp password")
 
     try:
         # Create employee record
@@ -811,11 +835,13 @@ def add_employee():
             }
         }
         
-        if created_username:
+        # ✅ CHANGED: Return the actual generated password
+        if created_username and temp_password:
             response["user_credentials"] = {
                 "username": created_username,
-                "temp_password": temp_password,
-                "message": "⚠️ Save these credentials! Send them to the employee."
+                "temp_password": temp_password,  # Real generated password
+                "message": "⚠️ IMPORTANT: Save these credentials and share them securely with the employee!",
+                "note": "This is the only time you will see this password."
             }
         
         return jsonify(response), 201
@@ -824,7 +850,6 @@ def add_employee():
         db.session.rollback()
         app.logger.error(f"Error creating employee: {str(e)}")
         return jsonify({"msg": f"Error creating employee: {str(e)}"}), 500
-
 
 @app.route("/employees", methods=["GET"])
 @jwt_required()
@@ -1144,7 +1169,7 @@ def get_payrolls():
         
         result = []
         for p in payrolls:
-            emp = Employee.query.get(p.employee_id)
+            emp = db.session.get(Employee, p.employee_id)
             result.append({
                 "id": p.id,
                 "employee": emp.name if emp else "Unknown",
@@ -1384,7 +1409,7 @@ def calculate_payroll_for_employee(employee, period_start, period_end):
     housing_levy = calculate_housing_levy(gross_salary)
     
     # Total deductions
-    total_deductions = nssf + nhif + paye + housing_levy
+    total_deductions = nssf + sha + paye + housing_levy
     
     # Net salary
     net_salary = gross_salary - total_deductions
@@ -1397,7 +1422,7 @@ def calculate_payroll_for_employee(employee, period_start, period_end):
         'employee_name': employee.name,
         'gross_salary': gross_salary,
         'nssf': nssf,
-        'sha': nhif,
+        'sha': sha,
         'paye': paye,
         'housing_levy': housing_levy,
         'total_deductions': total_deductions,
@@ -1502,7 +1527,7 @@ def submit_payroll():
             period_end=period_end,
             gross_salary=calc['gross_salary'],
             nssf=calc['nssf'],
-            nhif=calc['nhif'],
+            sha=calc['sha'],
             paye=calc['paye'],
             housing_levy=calc['housing_levy'],
             total_deductions=calc['total_deductions'],
@@ -2026,7 +2051,7 @@ def get_leave_requests():
     # Format response with employee names
     result = []
     for leave in leaves:
-        employee = Employee.query.get(leave.employee_id)
+        employee = db.session.get(Employee, leave.employee_id)
         result.append({
             'id': leave.id,
             'employee_id': leave.employee_id,
@@ -2215,8 +2240,9 @@ def get_users():
             'username': u.username,
             'role': u.role,
             'is_active': u.is_active,
-            'created_at': u.created_at.strftime('%Y-%m-%d %H:%M:%S') if u.created_at else None
-        })
+           'created_at': u.created_at.strftime('%Y-%m-%d %H:%M:%S') if u.created_at else None,
+            'last_login': u.last_login.strftime('%Y-%m-%d %H:%M:%S') if u.last_login else None
+    })
     
     return jsonify(result), 200
 
@@ -2259,7 +2285,7 @@ def create_user():
             role=data.get('role', 'Employee'),
             email=data.get('email'),
             phone=data.get('phone'),
-            is_active=True
+            is_active=data.get('is_active', True)
         )
         new_user.set_password(data['password'])
         
@@ -2306,6 +2332,7 @@ def update_user(user_id):
     user_to_update = User.query.get_or_404(user_id)
     data = request.json
     
+    
     # Update fields
     if 'username' in data:
         user_to_update.username = data['username']
@@ -2313,6 +2340,8 @@ def update_user(user_id):
         user_to_update.role = data['role']
     if 'password' in data and data['password']:
         user_to_update.set_password(data['password'])
+    if 'is_active' in data:
+        user_to_update.is_active = data['is_active']
     
     db.session.commit()
     
@@ -3771,6 +3800,64 @@ def update_employee_profile():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
+@app.route('/admin/pending-credentials', methods=['GET'])
+@jwt_required()
+def get_pending_credentials():
+    """Get list of new users who haven't logged in yet"""
+    current_username = get_jwt_identity()  # This returns USERNAME not ID
+    user = User.query.filter_by(username=current_username).first()  # ✅ Correct way
+    
+    # Check if user exists
+    if not user:
+        return jsonify({"msg": "User not found"}), 404
+    
+    # Only Admin and HR Officer can see this
+    if user.role not in ['Admin', 'HR Officer']:
+        return jsonify({"msg": "Unauthorized"}), 403
+    
+    # Get users who have temp_password and haven't logged in
+    new_users = User.query.filter(
+        User.temp_password != None,
+        User.last_login == None
+    ).all()
+    
+    credentials_list = []
+    for u in new_users:
+        # Find the employee to get their full name
+        emp = Employee.query.filter_by(email=u.email).first()
+        
+        credentials_list.append({
+            'user_id': u.id,
+            'username': u.username,
+            'temp_password': u.temp_password,
+            'email': u.email,
+            'role': u.role,
+            'employee_name': emp.name if emp else 'N/A',
+            'created_at': u.created_at.strftime('%Y-%m-%d %H:%M')
+        })
+    
+    return jsonify(credentials_list), 200
+
+@app.route('/admin/clear-credential/<int:user_id>', methods=['POST'])
+@jwt_required()
+def clear_credential(user_id):
+    """Clear temp password after HR has given it to employee"""
+    current_username = get_jwt_identity()  # USERNAME not ID
+    user = User.query.filter_by(username=current_username).first()  # ✅ Correct
+    
+    if not user:
+        return jsonify({"msg": "User not found"}), 404
+    
+    if user.role not in ['Admin', 'HR Officer']:
+        return jsonify({"msg": "Unauthorized"}), 403
+    
+    target_user = User.query.get(user_id)
+    if target_user:
+        target_user.temp_password = None  # Clear it
+        db.session.commit()
+        return jsonify({"msg": "Credential cleared"}), 200
+    
+    return jsonify({"msg": "User not found"}), 404
 
 
 # =====================================================

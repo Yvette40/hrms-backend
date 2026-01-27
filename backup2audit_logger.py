@@ -1,36 +1,15 @@
 """
 Complete Audit Logger with Database Lock Protection
-Logs ALL actions with duplicate prevention only
+Includes all required functions for HRMS system
 """
 
 from sqlalchemy.exc import OperationalError
 from datetime import datetime, UTC
 import time
-import logging
-
-logger = logging.getLogger(__name__)
-
-# Cache to prevent duplicates only (30 second window)
-last_audit_log = {}
 
 
 def log_audit_action_safe(db, action_type, description, module, user_id=None, ip_address=None, action_type_category="Normal"):
-    """Safe audit logging with automatic rollback on failure - LOGS EVERYTHING"""
-    
-    # Check for duplicates (30 second window) - still prevent spam
-    if user_id:
-        current_time = datetime.now().timestamp()
-        cache_key = f"{user_id}_{action_type}_{module}"
-        
-        if cache_key in last_audit_log:
-            last_log_time = last_audit_log[cache_key]
-            if (current_time - last_log_time) < 30:
-                logger.info(f"⏭️ Skipping duplicate: {action_type} by user {user_id} (within 30 seconds)")
-                return True
-        
-        # Update cache
-        last_audit_log[cache_key] = current_time
-    
+    """Safe audit logging with automatic rollback on failure"""
     max_retries = 3
     
     for attempt in range(max_retries):
@@ -50,8 +29,6 @@ def log_audit_action_safe(db, action_type, description, module, user_id=None, ip
             db.session.add(audit_entry)
             db.session.flush()
             db.session.commit()
-            
-            logger.info(f"✅ Audit log: {action_type} by user {user_id}")
             return True
             
         except OperationalError as e:
@@ -72,22 +49,7 @@ def log_audit_action_safe(db, action_type, description, module, user_id=None, ip
 
 
 def log_audit_action_enhanced(db, user_id, action, module, old_value=None, new_value=None, details=None, ip_address=None):
-    """Enhanced audit logging with retry logic - LOGS EVERYTHING"""
-    
-    # Check for duplicates (30 second window)
-    if user_id:
-        current_time = datetime.now().timestamp()
-        cache_key = f"{user_id}_{action}_{module}"
-        
-        if cache_key in last_audit_log:
-            last_log_time = last_audit_log[cache_key]
-            if (current_time - last_log_time) < 30:
-                logger.info(f"⏭️ Skipping duplicate: {action} by user {user_id} (within 30 seconds)")
-                return True
-        
-        # Update cache
-        last_audit_log[cache_key] = current_time
-    
+    """Enhanced audit logging with retry logic"""
     max_retries = 3
     
     for attempt in range(max_retries):
@@ -108,8 +70,6 @@ def log_audit_action_enhanced(db, user_id, action, module, old_value=None, new_v
             db.session.add(audit_entry)
             db.session.flush()
             db.session.commit()
-            
-            logger.info(f"✅ Audit log: {action} by user {user_id}")
             return True
             
         except OperationalError as e:
@@ -147,8 +107,6 @@ def log_security_event(db, event_type, description, severity="Low", user_id=None
             db.session.add(event)
             db.session.flush()
             db.session.commit()
-            
-            logger.warning(f"🔒 Security event: {event_type}")
             return True
             
         except OperationalError as e:
@@ -189,11 +147,6 @@ def log_sod_check(db, check_type, user_id, action, result, details=None):
             db.session.add(sod_log)
             db.session.flush()
             db.session.commit()
-            
-            if result == "PASSED":
-                logger.info(f"✅ SOD check passed: {check_type}")
-            else:
-                logger.warning(f"⚠️ SOD violation: {check_type}")
             return True
             
         except OperationalError as e:

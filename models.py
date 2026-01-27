@@ -21,7 +21,8 @@ class User(db.Model):
     phone = db.Column(db.String(20))
     is_active = db.Column(db.Boolean, default=True)
     last_login = db.Column(db.DateTime)
-    
+    temp_password = db.Column(db.String(100)) 
+
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -119,7 +120,7 @@ class Payroll(db.Model):
     
     # Deductions (Kenyan payroll)
     nssf = db.Column(db.Float, default=0)  # National Social Security Fund
-    nhif = db.Column(db.Float, default=0)  # National Hospital Insurance Fund
+    sha = db.Column(db.Float, default=0)  # Social Health Authority (replaced NHIF)
     paye = db.Column(db.Float, default=0)  # Pay As You Earn (Tax)
     housing_levy = db.Column(db.Float, default=0)  # Housing Development Levy
     total_deductions = db.Column(db.Float, default=0)
